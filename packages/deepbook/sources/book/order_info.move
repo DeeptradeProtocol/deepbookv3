@@ -8,7 +8,7 @@ module deepbook::order_info;
 use deepbook::{
     balances::{Self, Balances},
     constants,
-    deep_price::OrderDeepPrice,
+    deep_price::{Self, OrderDeepPrice},
     fill::Fill,
     math,
     order::{Self, Order}
