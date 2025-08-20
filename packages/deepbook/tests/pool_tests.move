@@ -1928,7 +1928,7 @@ fun check_pool_attributes<BaseAsset, QuoteAsset>(
 }
 
 #[test_only]
-public(package) fun setup_test(owner: address, test: &mut Scenario): ID {
+public fun setup_test(owner: address, test: &mut Scenario): ID {
     test.next_tx(owner);
     share_clock(test);
     share_registry_for_testing(test)
@@ -2065,7 +2065,7 @@ public(package) fun setup_reference_pool_deep_as_base<BaseAsset, QuoteAsset>(
 }
 
 #[test_only]
-public(package) fun setup_pool_with_default_fees<BaseAsset, QuoteAsset>(
+public fun setup_pool_with_default_fees<BaseAsset, QuoteAsset>(
     sender: address,
     registry_id: ID,
     whitelisted_pool: bool,
@@ -2144,7 +2144,7 @@ public(package) fun setup_default_permissionless_pool<BaseAsset, QuoteAsset>(
 
 #[test_only]
 /// Place a limit order
-public(package) fun place_limit_order<BaseAsset, QuoteAsset>(
+public fun place_limit_order<BaseAsset, QuoteAsset>(
     trader: address,
     pool_id: ID,
     balance_manager_id: ID,
@@ -2252,7 +2252,7 @@ public(package) fun place_post_only_limit_order<BaseAsset, QuoteAsset>(
 
 #[test_only]
 /// Place an order
-public(package) fun place_market_order<BaseAsset, QuoteAsset>(
+public fun place_market_order<BaseAsset, QuoteAsset>(
     trader: address,
     pool_id: ID,
     balance_manager_id: ID,
@@ -2296,7 +2296,7 @@ public(package) fun place_market_order<BaseAsset, QuoteAsset>(
 
 #[test_only]
 /// Cancel an order
-public(package) fun cancel_order<BaseAsset, QuoteAsset>(
+public fun cancel_order<BaseAsset, QuoteAsset>(
     sender: address,
     pool_id: ID,
     balance_manager_id: ID,
@@ -2329,7 +2329,7 @@ public(package) fun cancel_order<BaseAsset, QuoteAsset>(
 
 #[test_only]
 /// Set the time in the global clock to 1_000_000 + current_time
-public(package) fun set_time(current_time: u64, test: &mut Scenario) {
+public fun set_time(current_time: u64, test: &mut Scenario) {
     test.next_tx(OWNER);
     {
         let mut clock = test.take_shared<Clock>();
@@ -2339,7 +2339,7 @@ public(package) fun set_time(current_time: u64, test: &mut Scenario) {
 }
 
 #[test_only]
-public(package) fun modify_order<BaseAsset, QuoteAsset>(
+public fun modify_order<BaseAsset, QuoteAsset>(
     sender: address,
     pool_id: ID,
     balance_manager_id: ID,
@@ -2429,7 +2429,7 @@ public(package) fun get_time(test: &mut Scenario): u64 {
 }
 
 #[test_only]
-public(package) fun validate_open_orders<BaseAsset, QuoteAsset>(
+public fun validate_open_orders<BaseAsset, QuoteAsset>(
     sender: address,
     pool_id: ID,
     balance_manager_id: ID,
@@ -3015,7 +3015,7 @@ public(package) fun unregister_pool<BaseAsset, QuoteAsset>(
     }
 }
 
-public(package) fun setup_pool_with_default_fees_and_reference_pool<
+public fun setup_pool_with_default_fees_and_reference_pool<
     BaseAsset,
     QuoteAsset,
     ReferenceBaseAsset,
