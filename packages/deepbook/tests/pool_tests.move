@@ -1114,7 +1114,7 @@ public(package) fun add_deep_price_point<
 
 #[test_only]
 /// Set up a reference pool where Deep per base is 100
-public(package) fun setup_reference_pool<BaseAsset, QuoteAsset>(
+public fun setup_reference_pool<BaseAsset, QuoteAsset>(
     sender: address,
     registry_id: ID,
     balance_manager_id: ID,
