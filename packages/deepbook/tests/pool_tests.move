@@ -1083,12 +1083,7 @@ public fun setup_test(owner: address, test: &mut Scenario): ID {
 }
 
 #[test_only]
-public(package) fun add_deep_price_point<
-    BaseAsset,
-    QuoteAsset,
-    ReferenceBaseAsset,
-    ReferenceQuoteAsset,
->(
+public fun add_deep_price_point<BaseAsset, QuoteAsset, ReferenceBaseAsset, ReferenceQuoteAsset>(
     sender: address,
     target_pool_id: ID,
     reference_pool_id: ID,
