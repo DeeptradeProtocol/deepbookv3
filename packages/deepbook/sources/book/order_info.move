@@ -608,6 +608,8 @@ public fun create_order_info_for_tests(
     original_quantity: u64,
     executed_quantity: u64,
     status: u8,
+    is_bid: bool,
+    fee_is_deep: bool,
 ): OrderInfo {
     let order_deep_price = deep_price::new_order_deep_price(true, constants::deep_multiplier());
     let mut order_info = OrderInfo {
@@ -619,14 +621,14 @@ public fun create_order_info_for_tests(
         order_type: constants::no_restriction(),
         self_matching_option: constants::self_matching_allowed(),
         price,
-        is_bid: true,
+        is_bid,
         original_quantity,
         order_deep_price,
         expire_timestamp: constants::max_u64(),
         executed_quantity,
         cumulative_quote_quantity: 0,
         fills: vector[],
-        fee_is_deep: true,
+        fee_is_deep,
         paid_fees: 0,
         maker_fees: 0,
         epoch: 0,
