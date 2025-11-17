@@ -18,7 +18,7 @@ public fun create_test_protocol_config(): ProtocolConfig {
     let margin_pool_config = protocol_config::new_margin_pool_config(
         test_constants::supply_cap(),
         test_constants::max_utilization_rate(), // 80%
-        test_constants::referral_spread(), // 10%
+        test_constants::protocol_spread(), // 10%
         test_constants::min_borrow(),
     );
     let interest_config = protocol_config::new_interest_config(
@@ -44,13 +44,13 @@ fun create_custom_interest_config(
 fun create_custom_margin_pool_config(
     supply_cap: u64,
     max_utilization_rate: u64,
-    referral_spread: u64,
+    protocol_spread: u64,
     min_borrow: u64,
 ): MarginPoolConfig {
     protocol_config::new_margin_pool_config(
         supply_cap,
         max_utilization_rate,
-        referral_spread,
+        protocol_spread,
         min_borrow,
     )
 }
@@ -137,7 +137,7 @@ fun test_interest_rate_zero_base_rate() {
     let margin_pool_config = create_custom_margin_pool_config(
         test_constants::supply_cap(),
         test_constants::max_utilization_rate(),
-        test_constants::referral_spread(),
+        test_constants::protocol_spread(),
         test_constants::min_borrow(),
     );
     let interest_config = create_custom_interest_config(
@@ -166,7 +166,7 @@ fun test_interest_rate_different_slopes() {
     let margin_pool_config = create_custom_margin_pool_config(
         test_constants::supply_cap(),
         test_constants::max_utilization_rate(),
-        test_constants::referral_spread(),
+        test_constants::protocol_spread(),
         test_constants::min_borrow(),
     );
     let interest_config = create_custom_interest_config(
@@ -321,7 +321,7 @@ fun test_protocol_config_getters() {
     // Test margin pool config getters
     assert_eq!(config.supply_cap(), test_constants::supply_cap());
     assert_eq!(config.max_utilization_rate(), test_constants::max_utilization_rate());
-    assert_eq!(config.referral_spread(), test_constants::referral_spread());
+    assert_eq!(config.protocol_spread(), test_constants::protocol_spread());
     assert_eq!(config.min_borrow(), test_constants::min_borrow());
 
     // Test interest config getters
@@ -377,7 +377,7 @@ fun test_set_margin_pool_config_invalid_utilization() {
     let invalid_config = create_custom_margin_pool_config(
         test_constants::supply_cap(),
         1_100_000_000, // 110%
-        test_constants::referral_spread(),
+        test_constants::protocol_spread(),
         test_constants::min_borrow(),
     );
 
@@ -394,7 +394,7 @@ fun test_set_margin_pool_config_utilization_mismatch() {
     let invalid_config = create_custom_margin_pool_config(
         test_constants::supply_cap(),
         700_000_000, // 70% < 80% optimal
-        test_constants::referral_spread(),
+        test_constants::protocol_spread(),
         test_constants::min_borrow(),
     );
 
@@ -411,7 +411,7 @@ fun test_set_margin_pool_config_invalid_min_borrow() {
     let invalid_config = create_custom_margin_pool_config(
         test_constants::supply_cap(),
         test_constants::max_utilization_rate(),
-        test_constants::referral_spread(),
+        test_constants::protocol_spread(),
         100, // Below MIN_MIN_BORROW (1000)
     );
 
@@ -437,7 +437,7 @@ fun test_sequential_config_updates_violating_constraints() {
     let invalid_margin_config = create_custom_margin_pool_config(
         test_constants::supply_cap(),
         700_000_000, // 70% < 75% optimal
-        test_constants::referral_spread(),
+        test_constants::protocol_spread(),
         test_constants::min_borrow(),
     );
 
@@ -459,5 +459,166 @@ fun test_set_margin_pool_config_spread() {
     );
 
     config.set_margin_pool_config(invalid_config);
+    destroy(config);
+}
+
+// ===== Constructor Validation Tests =====
+
+#[test, expected_failure(abort_code = protocol_config::EInvalidRiskParam)]
+/// Test that creating margin pool config with protocol_spread > 100% fails
+fun test_new_margin_pool_config_invalid_protocol_spread_too_high() {
+    let _config = protocol_config::new_margin_pool_config(
+        test_constants::supply_cap(),
+        test_constants::max_utilization_rate(),
+        1_100_000_000, // 110% > 100%
+        test_constants::min_borrow(),
+    );
+    abort 0
+}
+
+#[test, expected_failure(abort_code = protocol_config::EInvalidRiskParam)]
+/// Test that creating margin pool config with max_utilization_rate > 100% fails
+fun test_new_margin_pool_config_invalid_max_utilization_rate() {
+    let _config = protocol_config::new_margin_pool_config(
+        test_constants::supply_cap(),
+        1_100_000_000, // 110% > 100%
+        test_constants::protocol_spread(),
+        test_constants::min_borrow(),
+    );
+    abort 0
+}
+
+#[test, expected_failure(abort_code = protocol_config::EInvalidRiskParam)]
+/// Test that creating margin pool config with min_borrow below minimum fails
+fun test_new_margin_pool_config_invalid_min_borrow() {
+    let _config = protocol_config::new_margin_pool_config(
+        test_constants::supply_cap(),
+        test_constants::max_utilization_rate(),
+        test_constants::protocol_spread(),
+        999, // < MIN_MIN_BORROW (1000)
+    );
+    abort 0
+}
+
+#[test, expected_failure(abort_code = protocol_config::EInvalidRiskParam)]
+/// Test that creating margin pool config with protocol_spread > max fails
+fun test_new_margin_pool_config_invalid_protocol_spread_above_max() {
+    let _config = protocol_config::new_margin_pool_config(
+        test_constants::supply_cap(),
+        test_constants::max_utilization_rate(),
+        201_000_000, // 20.1% > MAX_PROTOCOL_SPREAD (20%)
+        test_constants::min_borrow(),
+    );
+    abort 0
+}
+
+#[test, expected_failure(abort_code = protocol_config::EInvalidRiskParam)]
+/// Test that creating interest config with optimal_utilization > 100% fails
+fun test_new_interest_config_invalid_optimal_utilization() {
+    let _config = protocol_config::new_interest_config(
+        test_constants::base_rate(),
+        test_constants::base_slope(),
+        1_100_000_000, // 110% > 100%
+        test_constants::excess_slope(),
+    );
+    abort 0
+}
+
+#[test, expected_failure(abort_code = protocol_config::EInvalidRiskParam)]
+/// Test that creating protocol config with max_utilization < optimal_utilization fails
+fun test_new_protocol_config_invalid_utilization_mismatch() {
+    let margin_pool_config = protocol_config::new_margin_pool_config(
+        test_constants::supply_cap(),
+        700_000_000, // 70% max utilization
+        test_constants::protocol_spread(),
+        test_constants::min_borrow(),
+    );
+    let interest_config = protocol_config::new_interest_config(
+        test_constants::base_rate(),
+        test_constants::base_slope(),
+        800_000_000, // 80% optimal > 70% max
+        test_constants::excess_slope(),
+    );
+    let _config = protocol_config::new_protocol_config(margin_pool_config, interest_config);
+    abort 0
+}
+
+#[test]
+/// Test that creating valid configs succeeds
+fun test_new_configs_valid() {
+    // Create valid margin pool config
+    let margin_pool_config = protocol_config::new_margin_pool_config(
+        test_constants::supply_cap(),
+        test_constants::max_utilization_rate(),
+        test_constants::protocol_spread(),
+        test_constants::min_borrow(),
+    );
+
+    // Create valid interest config
+    let interest_config = protocol_config::new_interest_config(
+        test_constants::base_rate(),
+        test_constants::base_slope(),
+        test_constants::optimal_utilization(),
+        test_constants::excess_slope(),
+    );
+
+    // Create valid protocol config
+    let config = protocol_config::new_protocol_config(margin_pool_config, interest_config);
+
+    // Verify values
+    assert_eq!(config.supply_cap(), test_constants::supply_cap());
+    assert_eq!(config.max_utilization_rate(), test_constants::max_utilization_rate());
+    assert_eq!(config.protocol_spread(), test_constants::protocol_spread());
+    assert_eq!(config.min_borrow(), test_constants::min_borrow());
+    assert_eq!(config.base_rate(), test_constants::base_rate());
+    assert_eq!(config.base_slope(), test_constants::base_slope());
+    assert_eq!(config.optimal_utilization(), test_constants::optimal_utilization());
+    assert_eq!(config.excess_slope(), test_constants::excess_slope());
+
+    destroy(config);
+}
+
+#[test]
+/// Test edge case: max_utilization exactly equals optimal_utilization (valid)
+fun test_new_protocol_config_max_equals_optimal() {
+    let margin_pool_config = protocol_config::new_margin_pool_config(
+        test_constants::supply_cap(),
+        800_000_000, // 80%
+        test_constants::protocol_spread(),
+        test_constants::min_borrow(),
+    );
+    let interest_config = protocol_config::new_interest_config(
+        test_constants::base_rate(),
+        test_constants::base_slope(),
+        800_000_000, // 80% - exactly equal
+        test_constants::excess_slope(),
+    );
+    let config = protocol_config::new_protocol_config(margin_pool_config, interest_config);
+    destroy(config);
+}
+
+#[test]
+/// Test edge case: protocol_spread at exactly max allowed (valid)
+fun test_new_margin_pool_config_spread_at_max() {
+    let config = protocol_config::new_margin_pool_config(
+        test_constants::supply_cap(),
+        test_constants::max_utilization_rate(),
+        200_000_000, // Exactly MAX_PROTOCOL_SPREAD (20%)
+        test_constants::min_borrow(),
+    );
+    // Should succeed
+    destroy(config);
+}
+
+#[test]
+/// Test edge case: min_borrow at exactly minimum allowed (valid)
+fun test_new_margin_pool_config_min_borrow_at_min() {
+    let config = protocol_config::new_margin_pool_config(
+        test_constants::supply_cap(),
+        test_constants::max_utilization_rate(),
+        test_constants::protocol_spread(),
+        1000, // Exactly MIN_MIN_BORROW
+    );
+    // Should succeed
     destroy(config);
 }

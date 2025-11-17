@@ -15,13 +15,14 @@ use deepbook::{
     },
     constants,
     math,
-    pool::Pool
+    pool::Pool,
+    registry::Registry
 };
 use deepbook_margin::{
     margin_constants,
     margin_pool::MarginPool,
     margin_registry::MarginRegistry,
-    oracle::calculate_target_currency
+    oracle::{calculate_target_currency, get_pyth_price}
 };
 use pyth::price_info::PriceInfoObject;
 use std::{string::String, type_name};
@@ -41,8 +42,13 @@ const ECannotLiquidate: u64 = 9;
 const EIncorrectMarginPool: u64 = 10;
 const EInvalidManagerForSharing: u64 = 11;
 const EInvalidDebtAsset: u64 = 12;
+const ERepayAmountTooLow: u64 = 13;
+const ERepaySharesTooLow: u64 = 14;
 
 // === Structs ===
+/// Witness type for authorizing MarginManager to call protected features of the DeepBook
+public struct MarginApp has drop {}
+
 /// A shared object that wraps a `BalanceManager` and provides the necessary capabilities to deposit, withdraw, and trade.
 public struct MarginManager<phantom BaseAsset, phantom QuoteAsset> has key {
     id: UID,
@@ -65,6 +71,15 @@ public struct ManagerInitializer {
 
 // === Events ===
 /// Event emitted when a new margin manager is created.
+public struct MarginManagerCreatedEvent has copy, drop {
+    margin_manager_id: ID,
+    balance_manager_id: ID,
+    deepbook_pool_id: ID,
+    owner: address,
+    timestamp: u64,
+}
+
+#[deprecated(note = b"This event is deprecated, replaced by `MarginManagerCreatedEvent`.")]
 public struct MarginManagerEvent has copy, drop {
     margin_manager_id: ID,
     balance_manager_id: ID,
@@ -77,8 +92,7 @@ public struct LoanBorrowedEvent has copy, drop {
     margin_manager_id: ID,
     margin_pool_id: ID,
     loan_amount: u64,
-    total_borrow: u64,
-    total_shares: u64,
+    loan_shares: u64,
     timestamp: u64,
 }
 
@@ -106,11 +120,12 @@ public struct LiquidationEvent has copy, drop {
 /// Creates a new margin manager and shares it.
 public fun new<BaseAsset, QuoteAsset>(
     pool: &Pool<BaseAsset, QuoteAsset>,
-    registry: &mut MarginRegistry,
+    deepbook_registry: &Registry,
+    margin_registry: &mut MarginRegistry,
     clock: &Clock,
     ctx: &mut TxContext,
 ) {
-    let manager = new_margin_manager(pool, registry, clock, ctx);
+    let manager = new_margin_manager(pool, deepbook_registry, margin_registry, clock, ctx);
     transfer::share_object(manager);
 }
 
@@ -118,11 +133,12 @@ public fun new<BaseAsset, QuoteAsset>(
 /// The initializer is used to ensure the margin manager is shared after creation.
 public fun new_with_initializer<BaseAsset, QuoteAsset>(
     pool: &Pool<BaseAsset, QuoteAsset>,
-    registry: &mut MarginRegistry,
+    deepbook_registry: &Registry,
+    margin_registry: &mut MarginRegistry,
     clock: &Clock,
     ctx: &mut TxContext,
 ): (MarginManager<BaseAsset, QuoteAsset>, ManagerInitializer) {
-    let manager = new_margin_manager(pool, registry, clock, ctx);
+    let manager = new_margin_manager(pool, deepbook_registry, margin_registry, clock, ctx);
     let initializer = ManagerInitializer {
         margin_manager_id: manager.id(),
     };
@@ -259,8 +275,8 @@ public fun borrow_base<BaseAsset, QuoteAsset>(
         base_margin_pool.deepbook_pool_allowed(self.deepbook_pool),
         EDeepbookPoolNotAllowedForLoan,
     );
-    let (coin, total_borrow, total_shares) = base_margin_pool.borrow(loan_amount, clock, ctx);
-    self.borrowed_base_shares = total_shares;
+    let (coin, borrowed_shares) = base_margin_pool.borrow(loan_amount, clock, ctx);
+    self.borrowed_base_shares = self.borrowed_base_shares + borrowed_shares;
     self.margin_pool_id = option::some(base_margin_pool.id());
     self.deposit(registry, coin, ctx);
     let risk_ratio = self.risk_ratio_int(
@@ -277,8 +293,7 @@ public fun borrow_base<BaseAsset, QuoteAsset>(
         margin_manager_id: self.id(),
         margin_pool_id: base_margin_pool.id(),
         loan_amount,
-        total_borrow,
-        total_shares,
+        loan_shares: borrowed_shares,
         timestamp: clock.timestamp_ms(),
     });
 }
@@ -302,8 +317,8 @@ public fun borrow_quote<BaseAsset, QuoteAsset>(
         quote_margin_pool.deepbook_pool_allowed(self.deepbook_pool),
         EDeepbookPoolNotAllowedForLoan,
     );
-    let (coin, total_borrow, total_shares) = quote_margin_pool.borrow(loan_amount, clock, ctx);
-    self.borrowed_quote_shares = total_shares;
+    let (coin, borrowed_shares) = quote_margin_pool.borrow(loan_amount, clock, ctx);
+    self.borrowed_quote_shares = self.borrowed_quote_shares + borrowed_shares;
     self.margin_pool_id = option::some(quote_margin_pool.id());
     self.deposit(registry, coin, ctx);
     let risk_ratio = self.risk_ratio_int(
@@ -320,8 +335,7 @@ public fun borrow_quote<BaseAsset, QuoteAsset>(
         margin_manager_id: self.id(),
         margin_pool_id: quote_margin_pool.id(),
         loan_amount,
-        total_borrow,
-        total_shares,
+        loan_shares: borrowed_shares,
         timestamp: clock.timestamp_ms(),
     });
 }
@@ -394,6 +408,7 @@ public fun liquidate<BaseAsset, QuoteAsset, DebtAsset>(
         clock,
     );
     assert!(registry.can_liquidate(pool.id(), risk_ratio), ECannotLiquidate);
+    assert!(repay_coin.value() >= margin_constants::min_liquidation_repay(), ERepayAmountTooLow);
     let trade_proof = self.trade_proof(ctx);
     pool.cancel_all_orders(&mut self.balance_manager, &trade_proof, clock, ctx);
 
@@ -445,6 +460,7 @@ public fun liquidate<BaseAsset, QuoteAsset, DebtAsset>(
             math::div(repay_amount, debt),
         )
     }; // Assume index 2, so borrowed_shares = 350/2 = 175. 97.087 / 350 = 0.2774 * 175 = 48.545 shares being repaid (97.087 USDC is repayment)
+    assert!(repay_shares > 0, ERepaySharesTooLow);
     let (debt_repaid, pool_reward, pool_default) = margin_pool.repay_liquidation(
         repay_shares,
         repay_coin.split(repay_amount_with_pool_reward, ctx),
@@ -457,6 +473,11 @@ public fun liquidate<BaseAsset, QuoteAsset, DebtAsset>(
         self.borrowed_base_shares = self.borrowed_base_shares - repay_shares;
     } else {
         self.borrowed_quote_shares = self.borrowed_quote_shares - repay_shares;
+    };
+
+    // Clear margin_pool_id if fully liquidated
+    if (self.borrowed_base_shares == 0 && self.borrowed_quote_shares == 0) {
+        self.margin_pool_id = option::none();
     };
 
     // repay_amount * 1.05 is what the user should receive back, since the user provided both the repayment and pool reward
@@ -610,6 +631,73 @@ public fun calculate_debts<BaseAsset, QuoteAsset, DebtAsset>(
     (base_debt, quote_debt)
 }
 
+/// Returns comprehensive state information for a margin manager.
+/// Returns (manager_id, deepbook_pool_id, risk_ratio, base_asset, quote_asset,
+///          base_debt, quote_debt, base_pyth_price, base_pyth_decimals,
+///          quote_pyth_price, quote_pyth_decimals)
+public fun manager_state<BaseAsset, QuoteAsset>(
+    self: &MarginManager<BaseAsset, QuoteAsset>,
+    registry: &MarginRegistry,
+    base_oracle: &PriceInfoObject,
+    quote_oracle: &PriceInfoObject,
+    pool: &Pool<BaseAsset, QuoteAsset>,
+    base_margin_pool: &MarginPool<BaseAsset>,
+    quote_margin_pool: &MarginPool<QuoteAsset>,
+    clock: &Clock,
+): (ID, ID, u64, u64, u64, u64, u64, u64, u8, u64, u8) {
+    let manager_id = self.id();
+    let deepbook_pool_id = self.deepbook_pool;
+    let (base_asset, quote_asset) = self.calculate_assets(pool);
+    let (base_debt, quote_debt) = if (self.margin_pool_id.is_some()) {
+        if (self.has_base_debt()) {
+            self.calculate_debts(base_margin_pool, clock)
+        } else {
+            self.calculate_debts(quote_margin_pool, clock)
+        }
+    } else {
+        (0, 0)
+    };
+    let risk_ratio = self.risk_ratio(
+        registry,
+        base_oracle,
+        quote_oracle,
+        pool,
+        base_margin_pool,
+        quote_margin_pool,
+        clock,
+    );
+
+    // Get raw Pyth oracle prices and decimals
+    let (base_pyth_price, base_pyth_decimals) = get_pyth_price<BaseAsset>(
+        base_oracle,
+        registry,
+        clock,
+    );
+    let (quote_pyth_price, quote_pyth_decimals) = get_pyth_price<QuoteAsset>(
+        quote_oracle,
+        registry,
+        clock,
+    );
+
+    (
+        manager_id,
+        deepbook_pool_id,
+        risk_ratio,
+        base_asset,
+        quote_asset,
+        base_debt,
+        quote_debt,
+        base_pyth_price,
+        base_pyth_decimals,
+        quote_pyth_price,
+        quote_pyth_decimals,
+    )
+}
+
+public fun id<BaseAsset, QuoteAsset>(self: &MarginManager<BaseAsset, QuoteAsset>): ID {
+    self.id.to_inner()
+}
+
 public fun owner<BaseAsset, QuoteAsset>(self: &MarginManager<BaseAsset, QuoteAsset>): address {
     self.owner
 }
@@ -657,16 +745,22 @@ public(package) fun balance_manager_trading_mut<BaseAsset, QuoteAsset>(
     &mut self.balance_manager
 }
 
+/// Withdraws settled amounts from the pool permissionlessly.
+/// Anyone can call this via the pool_proxy to settle balances.
+public(package) fun withdraw_settled_amounts_permissionless_int<BaseAsset, QuoteAsset>(
+    self: &mut MarginManager<BaseAsset, QuoteAsset>,
+    pool: &mut Pool<BaseAsset, QuoteAsset>,
+) {
+    assert!(self.deepbook_pool == pool.id(), EIncorrectDeepBookPool);
+    pool.withdraw_settled_amounts_permissionless(&mut self.balance_manager);
+}
+
 /// Unwraps balance manager for trading in deepbook.
 public(package) fun trade_proof<BaseAsset, QuoteAsset>(
     self: &mut MarginManager<BaseAsset, QuoteAsset>,
     ctx: &TxContext,
 ): TradeProof {
     self.balance_manager.generate_proof_as_trader(&self.trade_cap, ctx)
-}
-
-public(package) fun id<BaseAsset, QuoteAsset>(self: &MarginManager<BaseAsset, QuoteAsset>): ID {
-    self.id.to_inner()
 }
 
 // === Private Functions ===
@@ -703,12 +797,13 @@ fun risk_ratio_int<BaseAsset, QuoteAsset, DebtAsset>(
 
 fun new_margin_manager<BaseAsset, QuoteAsset>(
     pool: &Pool<BaseAsset, QuoteAsset>,
-    registry: &mut MarginRegistry,
+    deepbook_registry: &Registry,
+    margin_registry: &mut MarginRegistry,
     clock: &Clock,
     ctx: &mut TxContext,
 ): MarginManager<BaseAsset, QuoteAsset> {
-    registry.load_inner();
-    assert!(registry.pool_enabled(pool), EMarginTradingNotAllowedInPool);
+    margin_registry.load_inner();
+    assert!(margin_registry.pool_enabled(pool), EMarginTradingNotAllowedInPool);
 
     let id = object::new(ctx);
     let margin_manager_id = id.to_inner();
@@ -719,12 +814,17 @@ fun new_margin_manager<BaseAsset, QuoteAsset>(
         deposit_cap,
         withdraw_cap,
         trade_cap,
-    ) = balance_manager::new_with_custom_owner_and_caps(id.to_address(), ctx);
-    registry.add_margin_manager(id.to_inner(), ctx);
+    ) = balance_manager::new_with_custom_owner_and_caps<MarginApp>(
+        deepbook_registry,
+        id.to_address(),
+        ctx,
+    );
+    margin_registry.add_margin_manager(id.to_inner(), ctx);
 
-    event::emit(MarginManagerEvent {
+    event::emit(MarginManagerCreatedEvent {
         margin_manager_id,
         balance_manager_id: object::id(&balance_manager),
+        deepbook_pool_id: pool.id(),
         owner,
         timestamp: clock.timestamp_ms(),
     });

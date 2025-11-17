@@ -14,6 +14,7 @@ use fun get_config_for_type as MarginRegistry.get_config_for_type;
 const EInvalidPythPrice: u64 = 1;
 const ECurrencyNotSupported: u64 = 2;
 const EPriceFeedIdMismatch: u64 = 3;
+const EInvalidPythPriceConf: u64 = 4;
 
 /// A buffer added to the exponent when doing currency conversions.
 const BUFFER: u8 = 10;
@@ -22,6 +23,7 @@ const BUFFER: u8 = 10;
 public struct PythConfig has drop, store {
     currencies: VecMap<TypeName, CoinTypeData>,
     max_age_secs: u64, // max age tolerance for pyth prices in seconds
+    max_conf_bps: u64, // max confidence interval tolerance
 }
 
 /// Find price feed IDs here https://www.pyth.network/developers/price-feed-ids
@@ -54,7 +56,11 @@ public fun new_coin_type_data<T>(
 
 /// Creates a new PythConfig struct.
 /// Can be attached by the Admin to MarginRegistry to allow oracle to work.
-public fun new_pyth_config(setups: vector<CoinTypeData>, max_age_secs: u64): PythConfig {
+public fun new_pyth_config(
+    setups: vector<CoinTypeData>,
+    max_age_secs: u64,
+    max_conf_bps: u64,
+): PythConfig {
     let mut currencies: VecMap<TypeName, CoinTypeData> = vec_map::empty();
 
     setups.do!(|coin_type| {
@@ -64,6 +70,7 @@ public fun new_pyth_config(setups: vector<CoinTypeData>, max_age_secs: u64): Pyt
     PythConfig {
         currencies,
         max_age_secs,
+        max_conf_bps,
     }
 }
 
@@ -177,6 +184,57 @@ fun price_config<T>(
     is_usd_price_config: bool,
     clock: &Clock,
 ): ConversionConfig {
+    let (pyth_price, pyth_decimals, pyth_conf, type_config) = get_validated_pyth_price<T>(
+        price_info_object,
+        registry,
+        clock,
+    );
+
+    let config = registry.get_config<PythConfig>();
+    assert!(pyth_conf <= config.max_conf_bps * pyth_price / 10_000, EInvalidPythPriceConf);
+
+    let target_decimals = if (is_usd_price_config) {
+        9
+    } else {
+        type_config.decimals
+    }; // Our target decimals
+    let base_decimals = if (is_usd_price_config) {
+        type_config.decimals
+    } else {
+        9
+    }; // Our starting decimals
+
+    ConversionConfig {
+        target_decimals,
+        base_decimals,
+        pyth_price,
+        pyth_decimals,
+    }
+}
+
+/// Gets the raw Pyth price for a given asset
+/// Returns (pyth_price, pyth_decimals)
+public(package) fun get_pyth_price<T>(
+    price_info_object: &PriceInfoObject,
+    registry: &MarginRegistry,
+    clock: &Clock,
+): (u64, u8) {
+    let (pyth_price, pyth_decimals, _, _) = get_validated_pyth_price<T>(
+        price_info_object,
+        registry,
+        clock,
+    );
+
+    (pyth_price, pyth_decimals)
+}
+
+/// Helper function to get and validate Pyth price data
+/// Returns (pyth_price, pyth_decimals, pyth_conf, type_config)
+fun get_validated_pyth_price<T>(
+    price_info_object: &PriceInfoObject,
+    registry: &MarginRegistry,
+    clock: &Clock,
+): (u64, u8, u64, CoinTypeData) {
     let config = registry.get_config<PythConfig>();
     let type_config = registry.get_config_for_type<T>();
 
@@ -193,25 +251,11 @@ fun price_config<T>(
         EPriceFeedIdMismatch,
     );
 
-    let target_decimals = if (is_usd_price_config) {
-        9
-    } else {
-        type_config.decimals
-    }; // Our target decimals
-    let base_decimals = if (is_usd_price_config) {
-        type_config.decimals
-    } else {
-        9
-    }; // Our starting decimals
     let pyth_price = price.get_price().get_magnitude_if_positive();
     let pyth_decimals = price.get_expo().get_magnitude_if_negative() as u8;
+    let pyth_conf = price.get_conf();
 
-    ConversionConfig {
-        target_decimals,
-        base_decimals,
-        pyth_price,
-        pyth_decimals,
-    }
+    (pyth_price, pyth_decimals, pyth_conf, type_config)
 }
 
 /// Gets the configuration for a given currency type.

@@ -9,6 +9,7 @@ const USER1: address = @0xA;
 const USER2: address = @0xB;
 const ADMIN: address = @0x0;
 const LIQUIDATOR: address = @0xC;
+const TEST_MARGIN_POOL_ID: address = @0x1234;
 
 // === Test Coin Types ===
 public struct USDC has drop {}
@@ -27,7 +28,7 @@ const PYTH_DECIMALS: u64 = 8;
 // === Margin Pool Constants ===
 const SUPPLY_CAP: u64 = 1_000_000_000_000_000; // 1B tokens with 9 decimals
 const MAX_UTILIZATION_RATE: u64 = 800_000_000; // 80%
-const REFERRAL_SPREAD: u64 = 100_000_000; // 10%
+const PROTOCOL_SPREAD: u64 = 100_000_000; // 10%
 const MIN_BORROW: u64 = 1000;
 
 // === Interest Rate Constants ===
@@ -58,12 +59,12 @@ public fun max_utilization_rate(): u64 {
     MAX_UTILIZATION_RATE
 }
 
-public fun referral_spread(): u64 {
-    REFERRAL_SPREAD
+public fun protocol_spread(): u64 {
+    PROTOCOL_SPREAD
 }
 
-public fun referral_spread_inverse(): u64 {
-    1_000_000_000 - REFERRAL_SPREAD
+public fun protocol_spread_inverse(): u64 {
+    1_000_000_000 - PROTOCOL_SPREAD
 }
 
 public fun min_borrow(): u64 {
@@ -170,4 +171,8 @@ public fun pyth_multiplier(): u64 {
 
 public fun pyth_decimals(): u64 {
     PYTH_DECIMALS
+}
+
+public fun test_margin_pool_id(): ID {
+    TEST_MARGIN_POOL_ID.to_id()
 }

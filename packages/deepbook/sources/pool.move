@@ -603,6 +603,16 @@ public fun withdraw_settled_amounts<BaseAsset, QuoteAsset>(
     self.vault.settle_balance_manager(settled, owed, balance_manager, trade_proof);
 }
 
+/// Withdraw settled amounts permissionlessly to the `balance_manager`.
+public fun withdraw_settled_amounts_permissionless<BaseAsset, QuoteAsset>(
+    self: &mut Pool<BaseAsset, QuoteAsset>,
+    balance_manager: &mut BalanceManager,
+) {
+    let self = self.load_inner_mut();
+    let (settled, owed) = self.state.withdraw_settled_amounts(balance_manager.id());
+    self.vault.settle_balance_manager_permissionless(settled, owed, balance_manager);
+}
+
 // === Public-Mutative Functions * GOVERNANCE * ===
 /// Stake DEEP tokens to the pool. The balance_manager must have enough DEEP
 /// tokens.
@@ -869,10 +879,12 @@ public fun update_referral_multiplier<BaseAsset, QuoteAsset>(
     self: &mut Pool<BaseAsset, QuoteAsset>,
     referral: &DeepBookReferral,
     multiplier: u64,
+    ctx: &TxContext,
 ) {
+    let _ = self.load_inner();
+    referral.assert_referral_owner(ctx);
     assert!(multiplier <= constants::referral_max_multiplier(), EInvalidReferralMultiplier);
     assert!(multiplier % constants::referral_multiplier() == 0, EInvalidReferralMultiplier);
-    let _ = self.load_inner();
     let referral_id = object::id(referral);
     let referral_rewards: &mut ReferralRewards<BaseAsset, QuoteAsset> = self
         .id
@@ -1660,6 +1672,7 @@ fun update_ewma_state<BaseAsset, QuoteAsset>(
     clock: &Clock,
     ctx: &TxContext,
 ): &mut EWMAState {
+    let pool_id = self.id();
     if (!self.id.exists_(constants::ewma_df_key())) {
         self.id.add(constants::ewma_df_key(), init_ewma_state(ctx));
     };
@@ -1669,7 +1682,7 @@ fun update_ewma_state<BaseAsset, QuoteAsset>(
         .borrow_mut(
             constants::ewma_df_key(),
         );
-    ewma_state.update(clock, ctx);
+    ewma_state.update(pool_id, clock, ctx);
 
     ewma_state
 }
