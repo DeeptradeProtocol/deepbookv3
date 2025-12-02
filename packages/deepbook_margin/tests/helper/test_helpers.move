@@ -21,11 +21,11 @@ use deepbook_margin::{
     test_constants::{Self, USDC, USDT, BTC, SUI}
 };
 use pyth::{i64, price, price_feed, price_identifier, price_info::{Self, PriceInfoObject}};
+use std::unit_test::destroy;
 use sui::{
     clock::{Self, Clock},
     coin::{Self, Coin},
-    test_scenario::{Self as test, Scenario, begin, return_shared},
-    test_utils::destroy
+    test_scenario::{Self as test, Scenario, begin, return_shared}
 };
 use token::deep::DEEP;
 
@@ -155,7 +155,7 @@ public fun get_margin_pool_caps(
 public fun get_margin_pool_cap(scenario: &mut Scenario, pool_id: ID): MarginPoolCap {
     scenario.next_tx(test_constants::admin());
     let cap = scenario.take_from_sender<MarginPoolCap>();
-    assert!(cap.margin_pool_id() == pool_id, 0);
+    assert!(cap.margin_pool_id() == pool_id);
     cap
 }
 
@@ -417,7 +417,6 @@ public fun create_test_pyth_config(): PythConfig {
     oracle::new_pyth_config(
         coin_data_vec,
         60, // max age 60 seconds
-        100, // max confidence interval, 1%
     )
 }
 

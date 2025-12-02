@@ -19,10 +19,12 @@ use deepbook_margin::{
         setup_btc_usd_deepbook_margin,
         setup_btc_sui_deepbook_margin,
         destroy_3,
-        return_shared_3
+        return_shared_3,
+        return_shared_4
     }
 };
-use sui::{test_scenario::return_shared, test_utils::destroy};
+use std::unit_test::destroy;
+use sui::test_scenario::return_shared;
 
 const ENoError: u64 = 0;
 const ECannotLiquidate: u64 = 1;
@@ -109,7 +111,10 @@ fun test_liquidation(error_code: u64) {
     // Deposit 1 BTC worth $50
     mm.deposit<BTC, USDC, BTC>(
         &registry,
+        &btc_price,
+        &usdc_price,
         mint_coin<BTC>(1 * btc_multiplier(), scenario.ctx()),
+        &clock,
         scenario.ctx(),
     );
 
@@ -180,13 +185,12 @@ fun test_liquidation(error_code: u64) {
         scenario.ctx(),
     );
 
-    assert!(base_coin.value() == 0, 0); // 0 BTC
-    assert!(quote_coin.value() == 168 * test_constants::usdc_multiplier(), 0); // 168 USDC
-    assert!(remaining_repay_coin.value() == 335_200_000, 0); // 335.2 USDC
+    assert!(base_coin.value() == 0); // 0 BTC
+    assert!(quote_coin.value() == 168 * test_constants::usdc_multiplier()); // 168 USDC
+    assert!(remaining_repay_coin.value() == 335_200_000); // 335.2 USDC
 
     destroy_3!(remaining_repay_coin, base_coin, quote_coin);
-    return_shared_3!(mm, usdc_pool, pool);
-    return_shared(btc_pool);
+    return_shared_4!(mm, usdc_pool, pool, btc_pool);
     destroy_3!(btc_price, usdc_price, btc_price_18);
     cleanup_margin_test(registry, admin_cap, maintainer_cap, clock, scenario);
 }
@@ -202,9 +206,6 @@ fun test_liquidation_quote_debt(error_code: u64) {
         _pool_id,
         registry_id,
     ) = setup_btc_usd_deepbook_margin();
-
-    let btc_price = build_btc_price_info_object(&mut scenario, 500, &clock);
-    let usdc_price = build_demo_usdc_price_info_object(&mut scenario, &clock);
 
     scenario.next_tx(test_constants::user1());
     let mut pool = scenario.take_shared<Pool<BTC, USDC>>();
@@ -223,11 +224,16 @@ fun test_liquidation_quote_debt(error_code: u64) {
     let mut mm = scenario.take_shared<MarginManager<BTC, USDC>>();
     let mut usdc_pool = scenario.take_shared_by_id<MarginPool<USDC>>(usdc_pool_id);
     let btc_pool = scenario.take_shared_by_id<MarginPool<BTC>>(btc_pool_id);
+    let btc_price = build_btc_price_info_object(&mut scenario, 500, &clock);
+    let usdc_price = build_demo_usdc_price_info_object(&mut scenario, &clock);
 
     // Deposit 1 BTC worth $500
     mm.deposit<BTC, USDC, BTC>(
         &registry,
+        &btc_price,
+        &usdc_price,
         mint_coin<BTC>(1 * btc_multiplier(), scenario.ctx()),
+        &clock,
         scenario.ctx(),
     );
 
@@ -315,9 +321,9 @@ fun test_liquidation_quote_debt(error_code: u64) {
         scenario.ctx(),
     );
 
-    assert!(base_coin.value() == 72826087, 0); // ~0.72826087 BTC
-    assert!(quote_coin.value() == 100 * test_constants::usdc_multiplier(), 0); // 100 USDC
-    assert!(remaining_repay_coin.value() == 319_750_000, 0); // 319.75 USDC
+    assert!(base_coin.value() == 72826087); // ~0.72826087 BTC
+    assert!(quote_coin.value() == 100 * test_constants::usdc_multiplier()); // 100 USDC
+    assert!(remaining_repay_coin.value() == 319_750_000); // 319.75 USDC
 
     destroy_3!(remaining_repay_coin, base_coin, quote_coin);
     return_shared_3!(mm, usdc_pool, pool);
@@ -338,9 +344,6 @@ fun test_liquidation_quote_debt_partial() {
         registry_id,
     ) = setup_btc_usd_deepbook_margin();
 
-    let btc_price = build_btc_price_info_object(&mut scenario, 500, &clock);
-    let usdc_price = build_demo_usdc_price_info_object(&mut scenario, &clock);
-
     scenario.next_tx(test_constants::user1());
     let mut pool = scenario.take_shared<Pool<BTC, USDC>>();
     let mut registry = scenario.take_shared<MarginRegistry>();
@@ -358,11 +361,16 @@ fun test_liquidation_quote_debt_partial() {
     let mut mm = scenario.take_shared<MarginManager<BTC, USDC>>();
     let mut usdc_pool = scenario.take_shared_by_id<MarginPool<USDC>>(usdc_pool_id);
     let btc_pool = scenario.take_shared_by_id<MarginPool<BTC>>(btc_pool_id);
+    let btc_price = build_btc_price_info_object(&mut scenario, 500, &clock);
+    let usdc_price = build_demo_usdc_price_info_object(&mut scenario, &clock);
 
     // Deposit 1 BTC worth $500
     mm.deposit<BTC, USDC, BTC>(
         &registry,
+        &btc_price,
+        &usdc_price,
         mint_coin<BTC>(1 * btc_multiplier(), scenario.ctx()),
+        &clock,
         scenario.ctx(),
     );
 
@@ -432,9 +440,9 @@ fun test_liquidation_quote_debt_partial() {
         scenario.ctx(),
     );
 
-    assert!(base_coin.value() == 0, 0); // 0 BTC
-    assert!(quote_coin.value() == 91_875_000, 0); // 91.875 USDC
-    assert!(remaining_repay_coin.value() == 0, 0); // 0 USDC
+    assert!(base_coin.value() == 0); // 0 BTC
+    assert!(quote_coin.value() == 91_875_000); // 91.875 USDC
+    assert!(remaining_repay_coin.value() == 0); // 0 USDC
     destroy_3!(remaining_repay_coin, base_coin, quote_coin);
 
     // Since risk ratio still < 1.1, can liquidate again
@@ -450,9 +458,9 @@ fun test_liquidation_quote_debt_partial() {
         scenario.ctx(),
     );
 
-    assert!(base_coin.value() == 72826087, 0); // ~0.72826087 BTC
-    assert!(quote_coin.value() == 8_125_000, 0); // 8.125 USDC
-    assert!(remaining_repay_coin.value() == 0, 0); // 0 USDC
+    assert!(base_coin.value() == 72826087); // ~0.72826087 BTC
+    assert!(quote_coin.value() == 8_125_000); // 8.125 USDC
+    assert!(remaining_repay_coin.value() == 0); // 0 USDC
 
     destroy_3!(remaining_repay_coin, base_coin, quote_coin);
     return_shared_3!(mm, usdc_pool, pool);
@@ -497,7 +505,10 @@ fun test_liquidation_base_debt_default() {
     // Deposit 500 USDC
     mm.deposit<BTC, USDC, USDC>(
         &registry,
+        &btc_price,
+        &usdc_price,
         mint_coin<USDC>(500 * usdc_multiplier(), scenario.ctx()),
+        &clock,
         scenario.ctx(),
     );
 
@@ -564,13 +575,13 @@ fun test_liquidation_base_debt_default() {
         scenario.ctx(),
     );
 
-    assert!(base_coin.value() == 20000000, 0); // 0.2 BTC
-    assert!(quote_coin.value() == 499999980, 0); // ~500 USDC. Rounding is due to conversion of BTC to USDC.
-    assert!(remaining_repay_coin.value() == 64031746, 0); // 0.6403 BTC
+    assert!(base_coin.value() == 20000000); // 0.2 BTC
+    assert!(quote_coin.value() == 499999980); // ~500 USDC. Rounding is due to conversion of BTC to USDC.
+    assert!(remaining_repay_coin.value() == 64031746); // 0.6403 BTC
 
     // The loans should be defaulted
-    assert!(mm.borrowed_base_shares() == 0, 0); // 0 BTC
-    assert!(mm.borrowed_quote_shares() == 0, 0); // 0 USDC
+    assert!(mm.borrowed_base_shares() == 0); // 0 BTC
+    assert!(mm.borrowed_quote_shares() == 0); // 0 USDC
 
     destroy_3!(remaining_repay_coin, base_coin, quote_coin);
     return_shared_3!(mm, usdc_pool, pool);
@@ -615,7 +626,10 @@ fun test_liquidation_base_debt() {
     // Deposit 500 USDC
     mm.deposit<BTC, USDC, USDC>(
         &registry,
+        &btc_price,
+        &usdc_price,
         mint_coin<USDC>(500 * usdc_multiplier(), scenario.ctx()),
+        &clock,
         scenario.ctx(),
     );
 
@@ -686,9 +700,9 @@ fun test_liquidation_base_debt() {
         scenario.ctx(),
     );
 
-    assert!(base_coin.value() == 20000000, 0); // 0.2 BTC
-    assert!(quote_coin.value() == 399999930, 0); // ~400 USDC
-    assert!(remaining_repay_coin.value() == 62545457, 0); // 0.62545457 BTC
+    assert!(base_coin.value() == 20000000); // 0.2 BTC
+    assert!(quote_coin.value() == 399999930); // ~400 USDC
+    assert!(remaining_repay_coin.value() == 62545457); // 0.62545457 BTC
 
     destroy_3!(remaining_repay_coin, base_coin, quote_coin);
     return_shared_3!(mm, usdc_pool, pool);
@@ -730,7 +744,10 @@ fun test_btc_sui_liquidation(error_code: u64) {
     // Deposit 0.1 BTC worth $5,000
     mm.deposit<BTC, SUI, BTC>(
         &registry,
+        &btc_price,
+        &sui_price,
         mint_coin<BTC>(10_000_000, scenario.ctx()), // 0.1 BTC (8 decimals)
+        &clock,
         scenario.ctx(),
     );
 
@@ -756,7 +773,7 @@ fun test_btc_sui_liquidation(error_code: u64) {
         &sui_pool,
         &clock,
     );
-    assert!(actual_risk_ratio == 2_250_000_000, 0);
+    assert!(actual_risk_ratio == 2_250_000_000);
 
     // Perform liquidation test
     scenario.next_tx(test_constants::liquidator());
@@ -776,7 +793,7 @@ fun test_btc_sui_liquidation(error_code: u64) {
             &sui_pool,
             &clock,
         );
-        assert!(safe_risk_ratio > test_constants::liquidation_risk_ratio(), 0);
+        assert!(safe_risk_ratio > test_constants::liquidation_risk_ratio());
 
         let (_base_coin, _quote_coin, _remaining_repay_coin) = mm.liquidate<BTC, SUI, SUI>(
             &registry,
@@ -807,7 +824,7 @@ fun test_btc_sui_liquidation(error_code: u64) {
         &sui_pool,
         &clock,
     );
-    assert!(liquidation_risk_ratio == 1_075_000_000, 0); // Should be liquidatable
+    assert!(liquidation_risk_ratio == 1_075_000_000); // Should be liquidatable
 
     // 180.25 SUI total is used. 175 SUI for repayment, 5.25 SUI for pool liquidation fee.
     // The liquidator should receive 175 * 0.02 = 3.5 SUI as a reward.
@@ -826,9 +843,9 @@ fun test_btc_sui_liquidation(error_code: u64) {
         scenario.ctx(),
     );
 
-    assert!(base_coin.value() == 0, 0);
-    assert!(quote_coin.value() == 183_750_000_000, 0);
-    assert!(remaining_repay_coin.value() == 2819_750_000_000, 0);
+    assert!(base_coin.value() == 0);
+    assert!(quote_coin.value() == 183_750_000_000);
+    assert!(remaining_repay_coin.value() == 2819_750_000_000);
 
     destroy_3!(remaining_repay_coin, base_coin, quote_coin);
     return_shared_3!(mm, sui_pool, pool);

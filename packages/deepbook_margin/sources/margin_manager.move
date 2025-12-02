@@ -79,14 +79,6 @@ public struct MarginManagerCreatedEvent has copy, drop {
     timestamp: u64,
 }
 
-#[deprecated(note = b"This event is deprecated, replaced by `MarginManagerCreatedEvent`.")]
-public struct MarginManagerEvent has copy, drop {
-    margin_manager_id: ID,
-    balance_manager_id: ID,
-    owner: address,
-    timestamp: u64,
-}
-
 /// Event emitted when loan is borrowed
 public struct LoanBorrowedEvent has copy, drop {
     margin_manager_id: ID,
@@ -159,9 +151,12 @@ public fun new<BaseAsset, QuoteAsset>(
     margin_registry: &mut MarginRegistry,
     clock: &Clock,
     ctx: &mut TxContext,
-) {
+): ID {
     let manager = new_margin_manager(pool, deepbook_registry, margin_registry, clock, ctx);
+    let margin_manager_id = manager.id();
     transfer::share_object(manager);
+
+    margin_manager_id
 }
 
 /// Creates a new margin manager and returns it along with an initializer.
@@ -192,6 +187,16 @@ public fun share<BaseAsset, QuoteAsset>(
     let ManagerInitializer {
         margin_manager_id: _,
     } = initializer;
+}
+
+/// Unregister the margin manager from the margin registry.
+public fun unregister_margin_manager<BaseAsset, QuoteAsset>(
+    self: &mut MarginManager<BaseAsset, QuoteAsset>,
+    margin_registry: &mut MarginRegistry,
+    ctx: &mut TxContext,
+) {
+    self.validate_owner(ctx);
+    margin_registry.remove_margin_manager(self.id(), ctx);
 }
 
 /// Set the referral for the margin manager.
@@ -701,6 +706,18 @@ public fun balance_manager<BaseAsset, QuoteAsset>(
     &self.balance_manager
 }
 
+public fun base_balance<BaseAsset, QuoteAsset>(self: &MarginManager<BaseAsset, QuoteAsset>): u64 {
+    self.balance_manager.balance<BaseAsset>()
+}
+
+public fun quote_balance<BaseAsset, QuoteAsset>(self: &MarginManager<BaseAsset, QuoteAsset>): u64 {
+    self.balance_manager.balance<QuoteAsset>()
+}
+
+public fun deep_balance<BaseAsset, QuoteAsset>(self: &MarginManager<BaseAsset, QuoteAsset>): u64 {
+    self.balance_manager.balance<DEEP>()
+}
+
 /// Returns (base_asset, quote_asset) for margin manager.
 public fun calculate_assets<BaseAsset, QuoteAsset>(
     self: &MarginManager<BaseAsset, QuoteAsset>,
@@ -956,7 +973,7 @@ fun new_margin_manager<BaseAsset, QuoteAsset>(
         deposit_cap,
         withdraw_cap,
         trade_cap,
-    ) = balance_manager::new_with_custom_owner_and_caps<MarginApp>(
+    ) = balance_manager::new_with_custom_owner_caps<MarginApp>(
         deepbook_registry,
         id.to_address(),
         ctx,
