@@ -1200,6 +1200,61 @@ public fun get_quantity_out_input_fee<BaseAsset, QuoteAsset>(
         )
 }
 
+/// Dry run to determine the input quantity for a given base or quote output quantity.
+/// Only one out of base_out or quote_out should be non-zero.
+/// Returns the (input_quantity, actual_output_quantity, deep_fee, input_fee)
+/// Uses DEEP token as fee.
+public fun get_quantity_in<BaseAsset, QuoteAsset>(
+    self: &Pool<BaseAsset, QuoteAsset>,
+    base_out: u64,
+    quote_out: u64,
+    clock: &Clock,
+): (u64, u64, u64, u64) {
+    let whitelist = self.whitelisted();
+    let self = self.load_inner();
+    let params = self.state.governance().trade_params();
+    let taker_fee = params.taker_fee();
+    let deep_price = self.deep_price.get_order_deep_price(whitelist);
+    self
+        .book
+        .get_quantity_in(
+            base_out,
+            quote_out,
+            taker_fee,
+            deep_price,
+            self.book.lot_size(),
+            true,
+            clock.timestamp_ms(),
+        )
+}
+
+/// Dry run to determine the input quantity for a given base or quote output quantity.
+/// Only one out of base_out or quote_out should be non-zero.
+/// Returns the (input_quantity, actual_output_quantity, deep_fee, input_fee)
+/// Uses input token as fee.
+public fun get_quantity_in_input_fee<BaseAsset, QuoteAsset>(
+    self: &Pool<BaseAsset, QuoteAsset>,
+    base_out: u64,
+    quote_out: u64,
+    clock: &Clock,
+): (u64, u64, u64, u64) {
+    let self = self.load_inner();
+    let params = self.state.governance().trade_params();
+    let taker_fee = params.taker_fee();
+    let deep_price = self.deep_price.empty_deep_price();
+    self
+        .book
+        .get_quantity_in(
+            base_out,
+            quote_out,
+            taker_fee,
+            deep_price,
+            self.book.lot_size(),
+            false,
+            clock.timestamp_ms(),
+        )
+}
+
 /// Returns the mid price of the pool.
 public fun mid_price<BaseAsset, QuoteAsset>(
     self: &Pool<BaseAsset, QuoteAsset>,
