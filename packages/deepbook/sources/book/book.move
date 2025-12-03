@@ -226,6 +226,145 @@ public(package) fun get_quantity_out(
     }
 }
 
+/// Given base_quantity_out and quote_quantity_out, calculate the required input amount.
+/// Returns (input_quantity, actual_output_quantity, deep_fee, input_fee).
+///
+/// * `input_quantity`: The net amount of input asset required to pay the sellers.
+/// * `actual_output_quantity`: The amount of output asset actually received. May be less than
+///   requested if there is insufficient liquidity in the order book.
+/// * `deep_fee`: The fee amount in DEEP (if pay_with_deep is true).
+/// * `input_fee`: The fee amount in input asset (if pay_with_deep is false).
+public(package) fun get_quantity_in(
+    self: &Book,
+    base_quantity_out: u64,
+    quote_quantity_out: u64,
+    taker_fee: u64,
+    deep_price: OrderDeepPrice,
+    lot_size: u64,
+    pay_with_deep: bool,
+    current_timestamp: u64,
+): (u64, u64, u64, u64) {
+    assert!((base_quantity_out > 0) != (quote_quantity_out > 0), EInvalidAmountIn);
+
+    // If base_quantity_out > 0, we want to buy Base. We are Bidding. Input is Quote.
+    // If quote_quantity_out > 0, we want to sell Base to get Quote. We are Asking. Input is Base.
+    let is_bid = base_quantity_out > 0;
+
+    let mut quantity_out_remaining = if (is_bid) base_quantity_out else quote_quantity_out;
+    let mut quantity_in_accumulated = 0;
+    let mut quantity_out_accumulated = 0;
+
+    // If is_bid (Buying), we match against Asks (Sellers).
+    // If !is_bid (Selling), we match against Bids (Buyers).
+    let book_side = if (is_bid) &self.asks else &self.bids;
+
+    // Asks sorted low->high (min_slice). Bids sorted high->low (max_slice).
+    let (mut ref, mut offset) = if (is_bid) book_side.min_slice() else book_side.max_slice();
+    let max_fills = constants::max_fills();
+    let mut current_fills = 0;
+
+    while (!ref.is_null() && quantity_out_remaining > 0 && current_fills < max_fills) {
+        let order = slice_borrow(book_side.borrow_slice(ref), offset);
+
+        if (current_timestamp <= order.expire_timestamp()) {
+            let cur_price = order.price();
+            let cur_quantity = order.quantity() - order.filled_quantity();
+
+            if (is_bid) {
+                // Goal: Buy Base.
+                // We need `quantity_out_remaining` Base.
+                // Order has `cur_quantity` Base.
+                let mut match_qty = quantity_out_remaining.min(cur_quantity);
+
+                // Round down to Lot Size
+                match_qty = match_qty - match_qty % lot_size;
+
+                if (match_qty > 0) {
+                    // Cost in Quote = Base * Price
+                    // Round UP to ensure we provide enough Quote to cover the cost of the Base.
+                    let cost_quote = math::mul_round_up(match_qty, cur_price);
+
+                    quantity_in_accumulated = quantity_in_accumulated + cost_quote;
+                    quantity_out_accumulated = quantity_out_accumulated + match_qty;
+                    quantity_out_remaining = quantity_out_remaining - match_qty;
+                }
+            } else {
+                // Goal: Get Quote (Sell Base).
+                // We need `quantity_out_remaining` Quote.
+                // Order buys Base at `cur_price`.
+                // Base Input Needed = Target Quote / Price.
+
+                // CRITICAL: Round UP to ensure we get enough output to cover the target.
+                let mut base_input_needed = math::div_round_up(quantity_out_remaining, cur_price);
+
+                // Cap at available liquidity in the order (It's a Bid, so cur_quantity is how much Base they want to buy)
+                base_input_needed = base_input_needed.min(cur_quantity);
+
+                // Round UP to Lot Size if necessary
+                // Logic: If we need 3.5 lots, we must provide 4 lots (if lot_size=1) to get at least the target output.
+                // Providing 3 lots would result in less output.
+                let remainder = base_input_needed % lot_size;
+                if (remainder > 0) {
+                    base_input_needed = base_input_needed + (lot_size - remainder);
+                };
+                // Re-check liquidity cap after rounding up to ensure we don't try to fill more than the order has.
+                // We trust that cur_quantity is always a multiple of lot_size (invariant enforced by create_order),
+                // so the min() result remains aligned.
+                base_input_needed = base_input_needed.min(cur_quantity);
+
+                if (base_input_needed > 0) {
+                    // Output Quote = Base Input * Price
+                    let output_quote = math::mul(base_input_needed, cur_price);
+
+                    quantity_in_accumulated = quantity_in_accumulated + base_input_needed;
+                    quantity_out_accumulated = quantity_out_accumulated + output_quote;
+
+                    // Subtract output received. Use saturation subtraction to avoid underflow if we overshot.
+                    if (output_quote >= quantity_out_remaining) {
+                        quantity_out_remaining = 0;
+                    } else {
+                        quantity_out_remaining = quantity_out_remaining - output_quote;
+                    };
+                }
+            };
+        };
+
+        (ref, offset) = if (is_bid) book_side.next_slice(ref, offset)
+        else book_side.prev_slice(ref, offset);
+        current_fills = current_fills + 1;
+    };
+
+    // Calculate Fees (Additive)
+    let (input_fee, deep_fee) = if (pay_with_deep) {
+        let fee_quantity = if (is_bid) {
+            // Buying Base: Volume is Base (quantity_out_accumulated)
+            deep_price.fee_quantity(
+                quantity_out_accumulated,
+                quantity_in_accumulated,
+                is_bid,
+            )
+        } else {
+            // Selling Base: Volume is Base (quantity_in_accumulated)
+            deep_price.fee_quantity(
+                quantity_in_accumulated,
+                quantity_out_accumulated,
+                is_bid,
+            )
+        };
+        (0, math::mul(taker_fee, fee_quantity.deep()))
+    } else {
+        // Fee is calculated on the Input Amount
+        let input_fee_rate = math::mul(
+            constants::fee_penalty_multiplier(),
+            taker_fee,
+        );
+        // We round UP the fee to ensure the protocol definitely gets its due.
+        (math::mul_round_up(quantity_in_accumulated, input_fee_rate), 0)
+    };
+
+    (quantity_in_accumulated, quantity_out_accumulated, deep_fee, input_fee)
+}
+
 /// Cancels an order given order_id
 public(package) fun cancel_order(self: &mut Book, order_id: u128): Order {
     self.book_side_mut(order_id).remove(order_id)
