@@ -11,6 +11,7 @@ use deepbook::{
         DepositCap,
         WithdrawCap,
         TradeProof,
+        DeepBookPoolReferral,
         DeepBookReferral
     },
     constants,
@@ -48,6 +49,7 @@ const ERepayAmountTooLow: u64 = 13;
 const ERepaySharesTooLow: u64 = 14;
 const EPoolNotEnabledForMarginTrading: u64 = 15;
 const EConditionalOrderNotFound: u64 = 16;
+const EOutstandingDebt: u64 = 17;
 
 // === Structs ===
 /// Witness type for authorizing MarginManager to call protected features of the DeepBook
@@ -353,26 +355,48 @@ public fun unregister_margin_manager<BaseAsset, QuoteAsset>(
     ctx: &mut TxContext,
 ) {
     self.validate_owner(ctx);
+    assert!(self.borrowed_base_shares == 0, EOutstandingDebt);
+    assert!(self.borrowed_quote_shares == 0, EOutstandingDebt);
+    assert!(self.margin_pool_id.is_none(), EOutstandingDebt);
+
     margin_registry.remove_margin_manager(self.id(), ctx);
 }
 
-/// Set the referral for the margin manager.
+#[deprecated(note = b"This function is deprecated, use `set_margin_manager_referral` instead.")]
 public fun set_referral<BaseAsset, QuoteAsset>(
+    _self: &mut MarginManager<BaseAsset, QuoteAsset>,
+    _referral_cap: &DeepBookReferral,
+    _ctx: &mut TxContext,
+) {
+    abort
+}
+
+/// Set the referral for the margin manager.
+public fun set_margin_manager_referral<BaseAsset, QuoteAsset>(
     self: &mut MarginManager<BaseAsset, QuoteAsset>,
-    referral_cap: &DeepBookReferral,
+    referral_cap: &DeepBookPoolReferral,
     ctx: &mut TxContext,
 ) {
     self.validate_owner(ctx);
-    self.balance_manager.set_referral(referral_cap, &self.trade_cap);
+    self.balance_manager.set_balance_manager_referral(referral_cap, &self.trade_cap);
+}
+
+#[deprecated(note = b"This function is deprecated, use `unset_margin_manager_referral` instead.")]
+public fun unset_referral<BaseAsset, QuoteAsset>(
+    _self: &mut MarginManager<BaseAsset, QuoteAsset>,
+    _ctx: &mut TxContext,
+) {
+    abort
 }
 
 /// Unset the referral for the margin manager.
-public fun unset_referral<BaseAsset, QuoteAsset>(
+public fun unset_margin_manager_referral<BaseAsset, QuoteAsset>(
     self: &mut MarginManager<BaseAsset, QuoteAsset>,
+    pool_id: ID,
     ctx: &mut TxContext,
 ) {
     self.validate_owner(ctx);
-    self.balance_manager.unset_referral(&self.trade_cap);
+    self.balance_manager.unset_balance_manager_referral(pool_id, &self.trade_cap);
 }
 
 // === Public Functions - Margin Manager ===
@@ -432,6 +456,7 @@ public fun withdraw<BaseAsset, QuoteAsset, WithdrawAsset>(
 ): Coin<WithdrawAsset> {
     registry.load_inner();
     self.validate_owner(ctx);
+    assert!(pool.id() == self.deepbook_pool(), EIncorrectDeepBookPool);
 
     let balance_manager = &mut self.balance_manager;
     let withdraw_cap = &self.withdraw_cap;

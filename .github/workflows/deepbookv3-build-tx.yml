@@ -17,6 +17,7 @@ on:
           - Adjust Tick Size
           - Adjust Min Lot Size
           - Transfer Funds
+          - Prep Deepbook MVR
       sui_tools_image:
         description: "image reference of sui_tools"
         default: "mysten/sui-tools:mainnet"
@@ -34,7 +35,7 @@ on:
 jobs:
   deepbook:
     name: deepbook create tx
-    runs-on: ubuntu-latest
+    runs-on: macos-latest
 
     steps:
       - name: Selected transaction type
@@ -311,6 +312,16 @@ jobs:
           ORIGIN: gh_action
         run: |
           cd scripts && pnpm install && pnpm ts-node transactions/transferFunds.ts
+
+      - name: Prep Deepbook MVR
+        if: ${{ inputs.transaction_type == 'Prep Deepbook MVR' }}
+        env:
+          NODE_ENV: production
+          GAS_OBJECT: ${{ inputs.gas_object_id }}
+          NETWORK: mainnet
+          ORIGIN: gh_action
+        run: |
+          cd scripts && pnpm install && pnpm ts-node transactions/newDeepbookVersion.ts
 
       - name: Show Transaction Data (To sign)
         run: |

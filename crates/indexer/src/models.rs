@@ -310,6 +310,14 @@ pub mod deepbook_margin {
             pub pool_reward: u64,
             pub pool_default: u64,
             pub risk_ratio: u64,
+            pub remaining_base_asset: u64,
+            pub remaining_quote_asset: u64,
+            pub remaining_base_debt: u64,
+            pub remaining_quote_debt: u64,
+            pub base_pyth_price: u64,
+            pub base_pyth_decimals: u8,
+            pub quote_pyth_price: u64,
+            pub quote_pyth_decimals: u8,
             pub timestamp: u64,
         }
 
@@ -341,8 +349,11 @@ pub mod deepbook_margin {
         pub struct MarginPoolConfig {
             pub supply_cap: u64,
             pub max_utilization_rate: u64,
-            pub referral_spread: u64,
+            pub protocol_spread: u64,
             pub min_borrow: u64,
+            pub rate_limit_capacity: u64,
+            pub rate_limit_refill_rate_per_ms: u64,
+            pub rate_limit_enabled: bool,
         }
 
         #[derive(Debug, Clone, Serialize, Deserialize)]

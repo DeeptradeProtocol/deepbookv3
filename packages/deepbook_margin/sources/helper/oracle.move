@@ -8,7 +8,7 @@ use deepbook::{constants, math};
 use deepbook_margin::{margin_constants, margin_registry::MarginRegistry};
 use pyth::{price_info::PriceInfoObject, pyth};
 use std::type_name::{Self, TypeName};
-use sui::{clock::Clock, coin::CoinMetadata, vec_map::{Self, VecMap}};
+use sui::{clock::Clock, coin::CoinMetadata, coin_registry::Currency, vec_map::{Self, VecMap}};
 
 use fun get_config_for_type as MarginRegistry.get_config_for_type;
 
@@ -44,10 +44,20 @@ public struct ConversionConfig has copy, drop {
     pyth_decimals: u8,
 }
 
-/// Creates a new CoinTypeData struct of type T.
-/// Uses CoinMetadata to avoid any errors in decimals.
+#[deprecated(note = b"Use new_coin_type_data_from_currency instead")]
 public fun new_coin_type_data<T>(
-    coin_metadata: &CoinMetadata<T>,
+    _coin_metadata: &CoinMetadata<T>,
+    _price_feed_id: vector<u8>,
+    _max_conf_bps: u64,
+    _max_ewma_difference_bps: u64,
+): CoinTypeData {
+    abort 1337
+}
+
+/// Creates a new CoinTypeData struct of type T.
+/// Uses Currency to avoid any errors in decimals.
+public fun new_coin_type_data_from_currency<T>(
+    currency: &Currency<T>,
     price_feed_id: vector<u8>,
     max_conf_bps: u64,
     max_ewma_difference_bps: u64,
@@ -61,7 +71,7 @@ public fun new_coin_type_data<T>(
 
     let type_name = type_name::with_defining_ids<T>();
     CoinTypeData {
-        decimals: coin_metadata.get_decimals(),
+        decimals: currency.decimals(),
         price_feed_id,
         type_name,
         max_conf_bps,
@@ -154,15 +164,15 @@ public(package) fun calculate_price<BaseAsset, QuoteAsset>(
 
     if (base_decimals > quote_decimals) {
         let decimal_diff = base_decimals - quote_decimals;
-        let multiplier = 10u128.pow(decimal_diff);
-        let price = (price_ratio as u128) * multiplier;
+        let divisor = 10u128.pow(decimal_diff);
+        let price = (price_ratio as u128) / divisor;
         assert!(price <= constants::max_price() as u128, EInvalidPrice);
 
         price as u64
     } else if (quote_decimals > base_decimals) {
         let decimal_diff = quote_decimals - base_decimals;
-        let divisor = 10u128.pow(decimal_diff);
-        let price = price_ratio as u128 / divisor;
+        let multiplier = 10u128.pow(decimal_diff);
+        let price = (price_ratio as u128) * multiplier;
         assert!(price <= constants::max_price() as u128, EInvalidPrice);
 
         price as u64
@@ -318,8 +328,8 @@ fun get_validated_pyth_price<T>(
     let ewma_price_object = price_info.get_price_feed().get_ema_price();
     let ewma_price = ewma_price_object.get_price().get_magnitude_if_positive();
     assert!(
-        (pyth_price as u128) <= (ewma_price as u128) * ((10_000 + type_config.max_ewma_difference_bps) as u128) / 10_000 &&
-        (pyth_price as u128) >= (ewma_price as u128) * ((10_000 - type_config.max_ewma_difference_bps) as u128) / 10_000,
+        (pyth_price as u128) * 10_000 <= (ewma_price as u128) * ((10_000 + type_config.max_ewma_difference_bps) as u128) &&
+        (pyth_price as u128) * 10_000 >= (ewma_price as u128) * ((10_000 - type_config.max_ewma_difference_bps) as u128),
         EInvalidPythPrice,
     );
 
