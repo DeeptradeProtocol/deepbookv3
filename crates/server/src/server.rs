@@ -28,6 +28,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use std::{collections::HashMap, net::SocketAddr};
 use sui_pg_db::DbArgs;
 use tokio::net::TcpListener;
+use tokio::sync::oneshot;
+use tokio::sync::OnceCell;
 use tower_http::cors::{AllowMethods, Any, CorsLayer};
 use url::Url;
 
@@ -39,6 +41,7 @@ use futures::future::join_all;
 use prometheus::Registry;
 use std::str::FromStr;
 use std::sync::Arc;
+use sui_futures::service::Service;
 use sui_indexer_alt_metrics::{MetricsArgs, MetricsService};
 use sui_json_rpc_types::{SuiObjectData, SuiObjectDataOptions, SuiObjectResponse};
 use sui_sdk::SuiClientBuilder;
@@ -50,7 +53,6 @@ use sui_types::{
     TypeTag,
 };
 use tokio::join;
-use tokio_util::sync::CancellationToken;
 
 pub const GET_POOLS_PATH: &str = "/get_pools";
 pub const GET_HISTORICAL_VOLUME_BY_BALANCE_MANAGER_ID_WITH_INTERVAL: &str =
@@ -63,6 +65,7 @@ pub const GET_NET_DEPOSITS: &str = "/get_net_deposits/:asset_ids/:timestamp";
 pub const TICKER_PATH: &str = "/ticker";
 pub const TRADES_PATH: &str = "/trades/:pool_name";
 pub const ORDER_UPDATES_PATH: &str = "/order_updates/:pool_name";
+pub const ORDERS_PATH: &str = "/orders/:pool_name/:balance_manager_id";
 pub const TRADE_COUNT_PATH: &str = "/trade_count";
 pub const ASSETS_PATH: &str = "/assets";
 pub const SUMMARY_PATH: &str = "/summary";
@@ -105,6 +108,8 @@ pub const DEPOSITED_ASSETS_PATH: &str = "/deposited_assets/:balance_manager_ids"
 pub struct AppState {
     reader: Reader,
     metrics: Arc<RpcMetrics>,
+    rpc_url: Url,
+    sui_client: Arc<OnceCell<sui_sdk::SuiClient>>,
     deepbook_package_id: String,
     deep_token_package_id: String,
     deep_treasury_id: String,
@@ -115,6 +120,7 @@ impl AppState {
         database_url: Url,
         args: DbArgs,
         registry: &Registry,
+        rpc_url: Url,
         deepbook_package_id: String,
         deep_token_package_id: String,
         deep_treasury_id: String,
@@ -124,11 +130,27 @@ impl AppState {
         Ok(Self {
             reader,
             metrics,
+            rpc_url,
+            sui_client: Arc::new(OnceCell::new()),
             deepbook_package_id,
             deep_token_package_id,
             deep_treasury_id,
         })
     }
+
+    /// Returns a reference to the shared SuiClient instance.
+    /// Lazily initializes the client on first access and caches it for subsequent calls
+    pub async fn sui_client(&self) -> Result<&sui_sdk::SuiClient, DeepBookError> {
+        self.sui_client
+            .get_or_try_init(|| async {
+                SuiClientBuilder::default()
+                    .build(self.rpc_url.as_str())
+                    .await
+            })
+            .await
+            .map_err(DeepBookError::from)
+    }
+
     pub(crate) fn metrics(&self) -> &RpcMetrics {
         &self.metrics
     }
@@ -158,25 +180,23 @@ pub async fn run_server(
     database_url: Url,
     db_arg: DbArgs,
     rpc_url: Url,
-    cancellation_token: CancellationToken,
     metrics_address: SocketAddr,
     deepbook_package_id: String,
     deep_token_package_id: String,
     deep_treasury_id: String,
+    margin_poll_interval_secs: u64,
+    margin_package_id: Option<String>,
 ) -> Result<(), anyhow::Error> {
     let registry = Registry::new_custom(Some("deepbook_api".into()), None)
         .expect("Failed to create Prometheus registry.");
 
-    let metrics = MetricsService::new(
-        MetricsArgs { metrics_address },
-        registry,
-        cancellation_token.clone(),
-    );
+    let metrics = MetricsService::new(MetricsArgs { metrics_address }, registry);
 
     let state = AppState::new(
-        database_url,
-        db_arg,
+        database_url.clone(),
+        db_arg.clone(),
         metrics.registry(),
+        rpc_url.clone(),
         deepbook_package_id,
         deep_token_package_id,
         deep_treasury_id,
@@ -184,22 +204,58 @@ pub async fn run_server(
     .await?;
     let socket_address = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)), server_port);
 
-    println!("🚀 Server started successfully on port {}", server_port);
+    println!("Server started successfully on port {}", server_port);
 
-    let _handle = tokio::spawn(async move {
-        let _ = metrics.run().await;
-    });
+    // Start margin metrics poller if margin_package_id is provided
+    // Must be done before spawning the metrics service since we need access to the registry
+    if let Some(margin_pkg_id) = margin_package_id {
+        let cancellation_token = tokio_util::sync::CancellationToken::new();
+        let margin_metrics = crate::margin_metrics::MarginMetrics::new(metrics.registry());
+        let margin_db = sui_pg_db::Db::for_read(database_url, db_arg).await?;
+        let margin_poller = crate::margin_metrics::MarginPoller::new(
+            margin_db,
+            rpc_url.clone(),
+            margin_pkg_id,
+            margin_metrics,
+            margin_poll_interval_secs,
+            cancellation_token,
+        );
+        tokio::spawn(async move {
+            if let Err(e) = margin_poller.run().await {
+                eprintln!("[margin_poller] Margin poller failed: {}", e);
+            }
+        });
+        println!(
+            "Margin metrics poller started (interval: {}s)",
+            margin_poll_interval_secs
+        );
+    }
+
+    let s_metrics = metrics.run().await?;
 
     let listener = TcpListener::bind(socket_address).await?;
-    axum::serve(listener, make_router(Arc::new(state), rpc_url))
-        .with_graceful_shutdown(async move {
-            cancellation_token.cancelled().await;
+    let (stx, srx) = oneshot::channel::<()>();
+
+    Service::new()
+        .attach(s_metrics)
+        .with_shutdown_signal(async move {
+            let _ = stx.send(());
         })
+        .spawn(async move {
+            axum::serve(listener, make_router(Arc::new(state)))
+                .with_graceful_shutdown(async move {
+                    let _ = srx.await;
+                })
+                .await?;
+
+            Ok(())
+        })
+        .main()
         .await?;
 
     Ok(())
 }
-pub(crate) fn make_router(state: Arc<AppState>, rpc_url: Url) -> Router {
+pub(crate) fn make_router(state: Arc<AppState>) -> Router {
     let cors = CorsLayer::new()
         .allow_methods(AllowMethods::list(vec![Method::GET, Method::OPTIONS]))
         .allow_headers(Any)
@@ -223,6 +279,7 @@ pub(crate) fn make_router(state: Arc<AppState>, rpc_url: Url) -> Router {
         .route(TRADES_PATH, get(trades))
         .route(TRADE_COUNT_PATH, get(trade_count))
         .route(ORDER_UPDATES_PATH, get(order_updates))
+        .route(ORDERS_PATH, get(orders))
         .route(ASSETS_PATH, get(assets))
         .route(OHCLV_PATH, get(ohclv))
         // Deepbook Margin Events
@@ -269,7 +326,7 @@ pub(crate) fn make_router(state: Arc<AppState>, rpc_url: Url) -> Router {
         .route(DEEP_SUPPLY_PATH, get(deep_supply))
         .route(SUMMARY_PATH, get(summary))
         .route(STATUS_PATH, get(status))
-        .with_state((state.clone(), rpc_url));
+        .with_state(state.clone());
 
     db_routes
         .merge(rpc_routes)
@@ -284,13 +341,13 @@ async fn health_check() -> StatusCode {
 /// Get indexer status including checkpoint lag
 async fn status(
     Query(params): Query<StatusQueryParams>,
-    State((state, rpc_url)): State<(Arc<AppState>, Url)>,
+    State(state): State<Arc<AppState>>,
 ) -> Result<Json<serde_json::Value>, DeepBookError> {
     // Get watermarks from the database
     let watermarks = state.reader.get_watermarks().await?;
 
     // Get the latest checkpoint from Sui RPC
-    let sui_client = SuiClientBuilder::default().build(rpc_url.as_str()).await?;
+    let sui_client = state.sui_client().await?;
     let latest_checkpoint = sui_client
         .read_api()
         .get_latest_checkpoint_sequence_number()
@@ -678,7 +735,7 @@ async fn fetch_historical_volume(
 
 #[allow(clippy::get_first)]
 async fn summary(
-    State((state, rpc_url)): State<(Arc<AppState>, Url)>,
+    State(state): State<Arc<AppState>>,
 ) -> Result<Json<Vec<HashMap<String, Value>>>, DeepBookError> {
     // Fetch pools metadata first since it's required for other functions
     let pools = state.reader.get_pools().await?;
@@ -720,7 +777,7 @@ async fn summary(
             orderbook(
                 Path(pool_name_clone),
                 Query(HashMap::from([("level".to_string(), "1".to_string())])),
-                State((state.clone(), rpc_url.clone())),
+                State(state.clone()),
             )
         })
         .collect();
@@ -983,6 +1040,78 @@ async fn order_updates(
     Ok(Json(trade_data))
 }
 
+async fn orders(
+    Path((pool_name, balance_manager_id)): Path<(String, String)>,
+    Query(params): Query<HashMap<String, String>>,
+    State(state): State<Arc<AppState>>,
+) -> Result<Json<Vec<HashMap<String, Value>>>, DeepBookError> {
+    let (pool_id, base_decimals, quote_decimals) =
+        state.reader.get_pool_decimals(&pool_name).await?;
+    let base_decimals = base_decimals as u8;
+    let quote_decimals = quote_decimals as u8;
+
+    let limit = params
+        .get("limit")
+        .and_then(|v| v.parse::<i64>().ok())
+        .unwrap_or(1000);
+
+    let status_filter = params.get("status").map(|s| {
+        s.split(',')
+            .map(|status| status.trim().to_string())
+            .collect::<Vec<_>>()
+    });
+
+    let orders = state
+        .reader
+        .get_orders_status(pool_id, limit, Some(balance_manager_id), status_filter)
+        .await?;
+
+    let base_factor = 10u64.pow(base_decimals as u32);
+    let price_factor = 10u64.pow((9 - base_decimals + quote_decimals) as u32);
+
+    let order_data: Vec<HashMap<String, Value>> = orders
+        .into_iter()
+        .map(|order| {
+            let order_type = if order.is_bid { "buy" } else { "sell" };
+            HashMap::from([
+                ("order_id".to_string(), Value::from(order.order_id)),
+                (
+                    "balance_manager_id".to_string(),
+                    Value::from(order.balance_manager_id),
+                ),
+                ("type".to_string(), Value::from(order_type)),
+                (
+                    "current_status".to_string(),
+                    Value::from(order.current_status),
+                ),
+                (
+                    "price".to_string(),
+                    Value::from(order.price as f64 / price_factor as f64),
+                ),
+                ("placed_at".to_string(), Value::from(order.placed_at as u64)),
+                (
+                    "last_updated_at".to_string(),
+                    Value::from(order.last_updated_at as u64),
+                ),
+                (
+                    "original_quantity".to_string(),
+                    Value::from(order.original_quantity as f64 / base_factor as f64),
+                ),
+                (
+                    "filled_quantity".to_string(),
+                    Value::from(order.filled_quantity as f64 / base_factor as f64),
+                ),
+                (
+                    "remaining_quantity".to_string(),
+                    Value::from(order.remaining_quantity as f64 / base_factor as f64),
+                ),
+            ])
+        })
+        .collect();
+
+    Ok(Json(order_data))
+}
+
 async fn trades(
     Path(pool_name): Path<String>,
     Query(params): Query<HashMap<String, String>>,
@@ -1213,7 +1342,7 @@ pub async fn assets(
 async fn orderbook(
     Path(pool_name): Path<String>,
     Query(params): Query<HashMap<String, String>>,
-    State((state, rpc_url)): State<(Arc<AppState>, Url)>,
+    State(state): State<Arc<AppState>>,
 ) -> Result<Json<HashMap<String, Value>>, DeepBookError> {
     let depth = params
         .get("depth")
@@ -1267,7 +1396,7 @@ async fn orderbook(
 
     let pool_address = ObjectID::from_hex_literal(&pool_id)?;
 
-    let sui_client = SuiClientBuilder::default().build(rpc_url.as_str()).await?;
+    let sui_client = state.sui_client().await?;
     let mut ptb = ProgrammableTransactionBuilder::new();
 
     let pool_object: SuiObjectResponse = sui_client
@@ -1296,7 +1425,7 @@ async fn orderbook(
     let pool_input = CallArg::Object(ObjectArg::SharedObject {
         id: pool_data.object_id,
         initial_shared_version,
-        mutable: false,
+        mutability: sui_types::transaction::SharedObjectMutability::Immutable,
     });
     ptb.input(pool_input)?;
 
@@ -1312,7 +1441,7 @@ async fn orderbook(
     let clock_input = CallArg::Object(ObjectArg::SharedObject {
         id: sui_clock_object_id,
         initial_shared_version: sui_types::base_types::SequenceNumber::from_u64(1),
-        mutable: false,
+        mutability: sui_types::transaction::SharedObjectMutability::Immutable,
     });
     ptb.input(clock_input)?;
 
@@ -1423,10 +1552,8 @@ async fn orderbook(
 }
 
 /// DEEP total supply
-async fn deep_supply(
-    State((state, rpc_url)): State<(Arc<AppState>, Url)>,
-) -> Result<Json<u64>, DeepBookError> {
-    let sui_client = SuiClientBuilder::default().build(rpc_url.as_str()).await?;
+async fn deep_supply(State(state): State<Arc<AppState>>) -> Result<Json<u64>, DeepBookError> {
+    let sui_client = state.sui_client().await?;
     let mut ptb = ProgrammableTransactionBuilder::new();
 
     let deep_treasury_object_id = ObjectID::from_hex_literal(&state.deep_treasury_id)?;
@@ -1453,7 +1580,7 @@ async fn deep_supply(
     let deep_treasury_input = CallArg::Object(ObjectArg::SharedObject {
         id: deep_treasury_data.object_id,
         initial_shared_version,
-        mutable: false,
+        mutability: sui_types::transaction::SharedObjectMutability::Immutable,
     });
     ptb.input(deep_treasury_input)?;
 
@@ -2154,9 +2281,27 @@ async fn margin_manager_states(
         .and_then(|v| v.parse::<f64>().ok());
     let deepbook_pool_id = params.get("deepbook_pool_id").cloned();
 
+    // Parse pool parameter (e.g., "SUI_USDC" -> base="SUI", quote="USDC")
+    let (base_asset_symbol, quote_asset_symbol) = params
+        .get("pool")
+        .map(|p| {
+            let parts: Vec<&str> = p.split('_').collect();
+            if parts.len() == 2 {
+                (Some(parts[0].to_string()), Some(parts[1].to_string()))
+            } else {
+                (None, None)
+            }
+        })
+        .unwrap_or((None, None));
+
     let states = state
         .reader
-        .get_margin_manager_states(max_risk_ratio, deepbook_pool_id)
+        .get_margin_manager_states(
+            max_risk_ratio,
+            deepbook_pool_id,
+            base_asset_symbol,
+            quote_asset_symbol,
+        )
         .await?;
 
     Ok(Json(states))

@@ -9,7 +9,7 @@ import { getFullnodeUrl, SuiClient } from "@mysten/sui/client";
 (async () => {
   // Update constant for env
   const env = "mainnet";
-  const versionToEnable = 5;
+  const versionToEnable = 6;
 
   const dbClient = new DeepBookClient({
     address: "0x0",
@@ -40,6 +40,8 @@ import { getFullnodeUrl, SuiClient } from "@mysten/sui/client";
   dbClient.deepBookAdmin.updateAllowedVersions("WAL_SUI")(tx);
   dbClient.deepBookAdmin.updateAllowedVersions("XBTC_USDC")(tx);
   dbClient.deepBookAdmin.updateAllowedVersions("IKA_USDC")(tx);
+  dbClient.deepBookAdmin.updateAllowedVersions("ALKIMI_SUI")(tx);
+  dbClient.deepBookAdmin.updateAllowedVersions("LZWBTC_USDC")(tx);
 
   let res = await prepareMultisigTx(tx, env, adminCapOwner[env]);
 

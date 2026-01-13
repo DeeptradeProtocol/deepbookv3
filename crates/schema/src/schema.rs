@@ -351,6 +351,24 @@ diesel::table! {
 }
 
 diesel::table! {
+    margin_pool_snapshots (id) {
+        id -> Int8,
+        margin_pool_id -> Text,
+        asset_type -> Text,
+        timestamp -> Timestamp,
+        total_supply -> Int8,
+        total_borrow -> Int8,
+        vault_balance -> Int8,
+        supply_cap -> Int8,
+        interest_rate -> Int8,
+        available_withdrawal -> Int8,
+        utilization_rate -> Float8,
+        solvency_ratio -> Nullable<Float8>,
+        available_liquidity_pct -> Nullable<Float8>,
+    }
+}
+
+diesel::table! {
     ohclv_1d (pool_id, bucket_time) {
         pool_id -> Text,
         bucket_time -> Date,
@@ -461,6 +479,26 @@ diesel::table! {
         target_pool -> Text,
         reference_pool -> Text,
         conversion_rate -> Int8,
+    }
+}
+
+diesel::table! {
+    pool_created (event_digest) {
+        event_digest -> Text,
+        digest -> Text,
+        sender -> Text,
+        checkpoint -> Int8,
+        timestamp -> Timestamp,
+        checkpoint_timestamp_ms -> Int8,
+        package -> Text,
+        pool_id -> Text,
+        taker_fee -> Int8,
+        maker_fee -> Int8,
+        tick_size -> Int8,
+        lot_size -> Int8,
+        min_size -> Int8,
+        whitelisted_pool -> Bool,
+        treasury_address -> Text,
     }
 }
 
@@ -692,11 +730,13 @@ diesel::allow_tables_to_appear_in_same_query!(
     margin_manager_state,
     margin_pool_config_updated,
     margin_pool_created,
+    margin_pool_snapshots,
     ohclv_1d,
     ohclv_1m,
     order_fills,
     order_updates,
     pause_cap_updated,
+    pool_created,
     pool_prices,
     pools,
     proposals,

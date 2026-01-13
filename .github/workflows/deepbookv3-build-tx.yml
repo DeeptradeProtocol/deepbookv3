@@ -18,6 +18,8 @@ on:
           - Adjust Min Lot Size
           - Transfer Funds
           - Prep Deepbook MVR
+          - Margin Setup
+          - Margin Prep
       sui_tools_image:
         description: "image reference of sui_tools"
         default: "mysten/sui-tools:mainnet"
@@ -56,8 +58,8 @@ jobs:
 
       - name: YAML Setup
         run: |
-          sui client --yes new-env --rpc https://fullnode.mainnet.sui.io:443 --alias mainnet
-          sui client switch --env mainnet
+          sui client --yes new-env --rpc https://fullnode.mainnet.sui.io:443 --alias mainnet-env
+          sui client switch --env mainnet-env
 
       - name: NPM BUILD TX Environment
         uses: actions/setup-node@v4
@@ -302,6 +304,16 @@ jobs:
           ORIGIN: gh_action
         run: |
           cd scripts && pnpm install && pnpm ts-node transactions/marginSetup.ts
+
+      - name: Margin Prep
+        if: ${{ inputs.transaction_type == 'Margin Prep' }}
+        env:
+          NODE_ENV: production
+          GAS_OBJECT: ${{ inputs.gas_object_id }}
+          NETWORK: mainnet
+          ORIGIN: gh_action
+        run: |
+          cd scripts && pnpm install && pnpm ts-node transactions/marginPrep.ts
 
       - name: Transfer Funds
         if: ${{ inputs.transaction_type == 'Transfer Funds' }}

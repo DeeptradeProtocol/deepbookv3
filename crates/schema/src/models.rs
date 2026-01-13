@@ -22,9 +22,12 @@ use crate::schema::{
     margin_pool_config_updated,
     // Margin Pool Admin Events
     margin_pool_created,
+    // snapshots for analytics
+    margin_pool_snapshots,
     order_fills,
     order_updates,
     pause_cap_updated,
+    pool_created,
     pool_prices,
     pools,
     proposals,
@@ -113,6 +116,30 @@ impl ToSql<Text, Pg> for OrderUpdateStatus {
     fn to_sql<'b>(&'b self, out: &mut Output<'b, '_, Pg>) -> diesel::serialize::Result {
         <str as ToSql<Text, Pg>>::to_sql(self.as_ref(), out)
     }
+}
+
+#[derive(Debug, Clone, QueryableByName, Serialize)]
+pub struct OrderStatus {
+    #[diesel(sql_type = diesel::sql_types::Text)]
+    pub order_id: String,
+    #[diesel(sql_type = diesel::sql_types::Text)]
+    pub balance_manager_id: String,
+    #[diesel(sql_type = diesel::sql_types::Bool)]
+    pub is_bid: bool,
+    #[diesel(sql_type = diesel::sql_types::Text)]
+    pub current_status: String,
+    #[diesel(sql_type = diesel::sql_types::BigInt)]
+    pub price: i64,
+    #[diesel(sql_type = diesel::sql_types::BigInt)]
+    pub placed_at: i64,
+    #[diesel(sql_type = diesel::sql_types::BigInt)]
+    pub last_updated_at: i64,
+    #[diesel(sql_type = diesel::sql_types::BigInt)]
+    pub original_quantity: i64,
+    #[diesel(sql_type = diesel::sql_types::BigInt)]
+    pub filled_quantity: i64,
+    #[diesel(sql_type = diesel::sql_types::BigInt)]
+    pub remaining_quantity: i64,
 }
 
 #[derive(Queryable, Selectable, Insertable, Identifiable, Debug, FieldCount)]
@@ -215,6 +242,25 @@ pub struct DeepBurned {
     pub package: String,
     pub pool_id: String,
     pub burned_amount: i64,
+}
+
+#[derive(Queryable, Selectable, Insertable, Identifiable, Debug, FieldCount, Serialize)]
+#[diesel(table_name = pool_created, primary_key(event_digest))]
+pub struct PoolCreated {
+    pub event_digest: String,
+    pub digest: String,
+    pub sender: String,
+    pub checkpoint: i64,
+    pub checkpoint_timestamp_ms: i64,
+    pub package: String,
+    pub pool_id: String,
+    pub taker_fee: i64,
+    pub maker_fee: i64,
+    pub tick_size: i64,
+    pub lot_size: i64,
+    pub min_size: i64,
+    pub whitelisted_pool: bool,
+    pub treasury_address: String,
 }
 
 #[derive(Queryable, Selectable, Insertable, Identifiable, Debug, FieldCount)]
@@ -698,4 +744,40 @@ pub struct MarginManagerState {
     pub lowest_trigger_above_price: Option<BigDecimal>,
     #[serde(serialize_with = "serialize_bigdecimal_option")]
     pub highest_trigger_below_price: Option<BigDecimal>,
+}
+
+// === Margin Pool Snapshots (for metrics polling) ===
+#[derive(Queryable, Selectable, Insertable, Debug, Serialize)]
+#[diesel(table_name = margin_pool_snapshots)]
+pub struct MarginPoolSnapshot {
+    pub id: i64,
+    pub margin_pool_id: String,
+    pub asset_type: String,
+    #[serde(serialize_with = "serialize_datetime")]
+    pub timestamp: chrono::NaiveDateTime,
+    pub total_supply: i64,
+    pub total_borrow: i64,
+    pub vault_balance: i64,
+    pub supply_cap: i64,
+    pub interest_rate: i64,
+    pub available_withdrawal: i64,
+    pub utilization_rate: f64,
+    pub solvency_ratio: Option<f64>,
+    pub available_liquidity_pct: Option<f64>,
+}
+
+#[derive(Insertable, Debug)]
+#[diesel(table_name = margin_pool_snapshots)]
+pub struct NewMarginPoolSnapshot {
+    pub margin_pool_id: String,
+    pub asset_type: String,
+    pub total_supply: i64,
+    pub total_borrow: i64,
+    pub vault_balance: i64,
+    pub supply_cap: i64,
+    pub interest_rate: i64,
+    pub available_withdrawal: i64,
+    pub utilization_rate: f64,
+    pub solvency_ratio: Option<f64>,
+    pub available_liquidity_pct: Option<f64>,
 }
