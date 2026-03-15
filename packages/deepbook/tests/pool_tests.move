@@ -9842,7 +9842,7 @@ fun pool_referral_fee_rate_ok() {
     {
         let mut pool = test.take_shared_by_id<Pool<SUI, USDC>>(pool_id);
         let referral = test.take_shared_by_id<DeepBookPoolReferral>(referral_id);
-        pool.update_pool_referral_fee_rate(&referral, fee_rate, test.ctx());
+        pool.update_pool_referral_fee_rate(&referral, fee_rate, 0, test.ctx());
         return_shared(referral);
         return_shared(pool);
     };
@@ -9922,7 +9922,7 @@ fun pool_referral_fee_rate_base_asset() {
     {
         let mut pool = test.take_shared_by_id<Pool<SUI, USDC>>(pool_id);
         let referral = test.take_shared_by_id<DeepBookPoolReferral>(referral_id);
-        pool.update_pool_referral_fee_rate(&referral, fee_rate, test.ctx());
+        pool.update_pool_referral_fee_rate(&referral, fee_rate, 0, test.ctx());
         return_shared(referral);
         return_shared(pool);
     };
@@ -10001,7 +10001,7 @@ fun pool_referral_fee_rate_deep() {
     {
         let mut pool = test.take_shared_by_id<Pool<SUI, USDC>>(pool_id);
         let referral = test.take_shared_by_id<DeepBookPoolReferral>(referral_id);
-        pool.update_pool_referral_fee_rate(&referral, fee_rate, test.ctx());
+        pool.update_pool_referral_fee_rate(&referral, fee_rate, 0, test.ctx());
         return_shared(referral);
         return_shared(pool);
     };
@@ -10081,7 +10081,7 @@ fun pool_referral_combined_fees() {
     {
         let mut pool = test.take_shared_by_id<Pool<SUI, USDC>>(pool_id);
         let referral = test.take_shared_by_id<DeepBookPoolReferral>(referral_id);
-        pool.update_pool_referral_fee_rate(&referral, fee_rate, test.ctx());
+        pool.update_pool_referral_fee_rate(&referral, fee_rate, 0, test.ctx());
         return_shared(referral);
         return_shared(pool);
     };
@@ -10159,7 +10159,7 @@ fun pool_referral_combined_fees_base_asset() {
     {
         let mut pool = test.take_shared_by_id<Pool<SUI, USDC>>(pool_id);
         let referral = test.take_shared_by_id<DeepBookPoolReferral>(referral_id);
-        pool.update_pool_referral_fee_rate(&referral, fee_rate, test.ctx());
+        pool.update_pool_referral_fee_rate(&referral, fee_rate, 0, test.ctx());
         return_shared(referral);
         return_shared(pool);
     };
@@ -10237,7 +10237,7 @@ fun pool_referral_combined_fees_deep() {
     {
         let mut pool = test.take_shared_by_id<Pool<SUI, USDC>>(pool_id);
         let referral = test.take_shared_by_id<DeepBookPoolReferral>(referral_id);
-        pool.update_pool_referral_fee_rate(&referral, fee_rate, test.ctx());
+        pool.update_pool_referral_fee_rate(&referral, fee_rate, 0, test.ctx());
         return_shared(referral);
         return_shared(pool);
     };
@@ -10353,7 +10353,7 @@ fun whitelisted_pool_referral_fee() {
     {
         let mut pool = test.take_shared_by_id<Pool<SUI, USDC>>(pool_id);
         let referral = test.take_shared_by_id<DeepBookPoolReferral>(referral_id);
-        pool.update_pool_referral_fee_rate(&referral, fee_rate, test.ctx());
+        pool.update_pool_referral_fee_rate(&referral, fee_rate, 0, test.ctx());
         return_shared(referral);
         return_shared(pool);
     };
@@ -10430,7 +10430,7 @@ fun pool_referral_fee_zero() {
     {
         let mut pool = test.take_shared_by_id<Pool<SUI, USDC>>(pool_id);
         let referral = test.take_shared_by_id<DeepBookPoolReferral>(referral_id);
-        pool.update_pool_referral_fee_rate(&referral, fee_rate, test.ctx());
+        pool.update_pool_referral_fee_rate(&referral, fee_rate, 0, test.ctx());
         return_shared(referral);
         return_shared(pool);
     };
@@ -10502,7 +10502,7 @@ fun pool_referral_fee_update() {
     {
         let mut pool = test.take_shared_by_id<Pool<SUI, USDC>>(pool_id);
         let referral = test.take_shared_by_id<DeepBookPoolReferral>(referral_id);
-        pool.update_pool_referral_fee_rate(&referral, fee_rate_1, test.ctx());
+        pool.update_pool_referral_fee_rate(&referral, fee_rate_1, 0, test.ctx());
         return_shared(referral);
         return_shared(pool);
     };
@@ -10513,7 +10513,7 @@ fun pool_referral_fee_update() {
     {
         let mut pool = test.take_shared_by_id<Pool<SUI, USDC>>(pool_id);
         let referral = test.take_shared_by_id<DeepBookPoolReferral>(referral_id);
-        pool.update_pool_referral_fee_rate(&referral, fee_rate_2, test.ctx());
+        pool.update_pool_referral_fee_rate(&referral, fee_rate_2, 0, test.ctx());
         return_shared(referral);
         return_shared(pool);
     };
@@ -10585,7 +10585,7 @@ fun pool_referral_fee_maker_no_fill() {
     {
         let mut pool = test.take_shared_by_id<Pool<SUI, USDC>>(pool_id);
         let referral = test.take_shared_by_id<DeepBookPoolReferral>(referral_id);
-        pool.update_pool_referral_fee_rate(&referral, fee_rate, test.ctx());
+        pool.update_pool_referral_fee_rate(&referral, fee_rate, 0, test.ctx());
         return_shared(referral);
         return_shared(pool);
     };
@@ -10663,7 +10663,7 @@ fun pool_referral_fee_maker_partial_fill() {
     {
         let mut pool = test.take_shared_by_id<Pool<SUI, USDC>>(pool_id);
         let referral = test.take_shared_by_id<DeepBookPoolReferral>(referral_id);
-        pool.update_pool_referral_fee_rate(&referral, fee_rate, test.ctx());
+        pool.update_pool_referral_fee_rate(&referral, fee_rate, 0, test.ctx());
         return_shared(referral);
         return_shared(pool);
     };
@@ -10748,7 +10748,7 @@ fun pool_referral_fee_max_exceeded() {
     {
         let mut pool = test.take_shared_by_id<Pool<SUI, USDC>>(pool_id);
         let referral = test.take_shared_by_id<DeepBookPoolReferral>(referral_id);
-        pool.update_pool_referral_fee_rate(&referral, fee_rate, test.ctx());
+        pool.update_pool_referral_fee_rate(&referral, fee_rate, 0, test.ctx());
         return_shared(referral);
         return_shared(pool);
     };
@@ -10774,7 +10774,7 @@ fun pool_referral_fee_invalid_precision() {
     {
         let mut pool = test.take_shared_by_id<Pool<SUI, USDC>>(pool_id);
         let referral = test.take_shared_by_id<DeepBookPoolReferral>(referral_id);
-        pool.update_pool_referral_fee_rate(&referral, fee_rate, test.ctx());
+        pool.update_pool_referral_fee_rate(&referral, fee_rate, 0, test.ctx());
         return_shared(referral);
         return_shared(pool);
     };
@@ -10799,7 +10799,7 @@ fun pool_referral_fee_unauthorized_update() {
     {
         let mut pool = test.take_shared_by_id<Pool<SUI, USDC>>(pool_id);
         let referral = test.take_shared_by_id<DeepBookPoolReferral>(referral_id);
-        pool.update_pool_referral_fee_rate(&referral, fee_rate, test.ctx());
+        pool.update_pool_referral_fee_rate(&referral, fee_rate, 0, test.ctx());
         return_shared(referral);
         return_shared(pool);
     };

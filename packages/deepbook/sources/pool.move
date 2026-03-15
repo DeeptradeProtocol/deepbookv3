@@ -108,9 +108,10 @@ public struct DeepBurned<phantom BaseAsset, phantom QuoteAsset> has copy, drop, 
     deep_burned: u64,
 }
 
-/// The configuration for the referral fee rate.
+/// The configuration for the referral fee rates.
 public struct ReferralFeeConfig has store {
-    fee_rate: u64,
+    taker_fee_rate: u64,
+    maker_fee_rate: u64,
 }
 
 /// The key for the referral fee configuration.
@@ -939,22 +940,26 @@ public fun update_pool_referral_multiplier<BaseAsset, QuoteAsset>(
 public fun update_pool_referral_fee_rate<BaseAsset, QuoteAsset>(
     self: &mut Pool<BaseAsset, QuoteAsset>,
     referral: &DeepBookPoolReferral,
-    fee_rate: u64,
+    taker_fee_rate: u64,
+    maker_fee_rate: u64,
     ctx: &TxContext,
 ) {
     let _ = self.load_inner();
     referral.assert_referral_owner(ctx);
     assert!(referral.balance_manager_referral_pool_id() == self.id(), EWrongPoolReferral);
-    assert!(fee_rate <= constants::max_referral_fee_rate(), EInvalidReferralFeeRate);
-    assert!(fee_rate % constants::fee_precision_multiple() == 0, EInvalidReferralFeeRate);
+    assert!(taker_fee_rate <= constants::max_referral_fee_rate(), EInvalidReferralFeeRate);
+    assert!(taker_fee_rate % constants::fee_precision_multiple() == 0, EInvalidReferralFeeRate);
+    assert!(maker_fee_rate <= constants::max_referral_fee_rate(), EInvalidReferralFeeRate);
+    assert!(maker_fee_rate % constants::fee_precision_multiple() == 0, EInvalidReferralFeeRate);
 
     let referral_id = object::id(referral);
     let key = ReferralFeeConfigKey(referral_id);
     if (self.id.exists_(key)) {
         let config: &mut ReferralFeeConfig = self.id.borrow_mut(key);
-        config.fee_rate = fee_rate;
+        config.taker_fee_rate = taker_fee_rate;
+        config.maker_fee_rate = maker_fee_rate;
     } else {
-        self.id.add(key, ReferralFeeConfig { fee_rate });
+        self.id.add(key, ReferralFeeConfig { taker_fee_rate, maker_fee_rate });
     }
 }
 
@@ -1994,7 +1999,7 @@ fun process_referral_fees<BaseAsset, QuoteAsset>(
             } else {
                 order_info.executed_quantity()
             };
-            volume_fee = math::mul(volume, config.fee_rate);
+            volume_fee = math::mul(volume, config.taker_fee_rate);
         };
 
         let referral_rewards: &mut ReferralRewards<BaseAsset, QuoteAsset> = self
