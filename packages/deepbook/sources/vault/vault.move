@@ -139,6 +139,27 @@ public(package) fun withdraw_deep_to_burn<BaseAsset, QuoteAsset>(
     self.deep_balance.split(amount_to_burn)
 }
 
+public(package) fun withdraw_referral_fee_base<BaseAsset, QuoteAsset>(
+    self: &mut Vault<BaseAsset, QuoteAsset>,
+    amount: u64,
+): Balance<BaseAsset> {
+    self.base_balance.split(amount)
+}
+
+public(package) fun withdraw_referral_fee_quote<BaseAsset, QuoteAsset>(
+    self: &mut Vault<BaseAsset, QuoteAsset>,
+    amount: u64,
+): Balance<QuoteAsset> {
+    self.quote_balance.split(amount)
+}
+
+public(package) fun withdraw_referral_fee_deep<BaseAsset, QuoteAsset>(
+    self: &mut Vault<BaseAsset, QuoteAsset>,
+    amount: u64,
+): Balance<DEEP> {
+    self.deep_balance.split(amount)
+}
+
 public(package) fun borrow_flashloan_base<BaseAsset, QuoteAsset>(
     self: &mut Vault<BaseAsset, QuoteAsset>,
     pool_id: ID,
