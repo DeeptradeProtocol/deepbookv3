@@ -5,8 +5,13 @@
 module deepbook::maker_referral_tests;
 
 use deepbook::{
-    balance_manager::{BalanceManager, TradeCap, DeepBookPoolReferral},
-    balance_manager_tests::{USDC, create_acct_and_share_with_funds_typed, asset_balance},
+    balance_manager::{Self, BalanceManager, TradeCap, DeepBookPoolReferral},
+    balance_manager_tests::{
+        USDC,
+        create_acct_and_share_with_funds_typed,
+        asset_balance,
+        deposit_into_account
+    },
     constants,
     math,
     pool::Pool,
@@ -22,7 +27,12 @@ use deepbook::{
     }
 };
 use std::unit_test::assert_eq;
-use sui::{clock::Clock, sui::SUI, test_scenario::{Scenario, begin, end, return_shared}};
+use sui::{
+    clock::Clock,
+    coin::mint_for_testing,
+    sui::SUI,
+    test_scenario::{Scenario, begin, end, return_shared}
+};
 use token::deep::DEEP;
 
 const OWNER: address = @0x1;
@@ -2407,6 +2417,137 @@ fun maker_referral_claim_rewards_after_fills_ok() {
     end(test);
 }
 
+#[test]
+fun maker_referral_changed_after_placement_ok() {
+    let mut test = begin(OWNER);
+    let registry_id = setup_test(OWNER, &mut test);
+    let balance_manager_id_alice = create_acct_and_share_with_funds_typed<SUI, USDC, SUI, DEEP>(
+        ALICE,
+        1_000_000 * constants::float_scaling(),
+        &mut test,
+    );
+    let pool_id = setup_pool_with_default_fees_and_reference_pool<SUI, USDC, SUI, DEEP>(
+        ALICE,
+        registry_id,
+        balance_manager_id_alice,
+        &mut test,
+    );
+    let balance_manager_id_bob = create_acct_and_share_with_funds_typed<SUI, USDC, SUI, DEEP>(
+        BOB,
+        1_000_000 * constants::float_scaling(),
+        &mut test,
+    );
+
+    let maker_fee_rate = 1_000_000;
+
+    // Mint two referrals: R1 and R2
+    let referral_id_r1;
+    let referral_id_r2;
+    test.next_tx(ALICE);
+    {
+        let mut pool = test.take_shared_by_id<Pool<SUI, USDC>>(pool_id);
+        referral_id_r1 = pool.mint_referral(0, test.ctx());
+        referral_id_r2 = pool.mint_referral(0, test.ctx());
+        return_shared(pool);
+    };
+    test.next_tx(ALICE);
+    {
+        let mut pool = test.take_shared_by_id<Pool<SUI, USDC>>(pool_id);
+        let referral_r1 = test.take_shared_by_id<DeepBookPoolReferral>(referral_id_r1);
+        pool.update_pool_referral_fee_rate(&referral_r1, 0, maker_fee_rate, test.ctx());
+        return_shared(referral_r1);
+        let referral_r2 = test.take_shared_by_id<DeepBookPoolReferral>(referral_id_r2);
+        pool.update_pool_referral_fee_rate(&referral_r2, 0, maker_fee_rate, test.ctx());
+        return_shared(referral_r2);
+        return_shared(pool);
+    };
+
+    // BOB sets R1 on his balance manager
+    test.next_tx(BOB);
+    {
+        let mut balance_manager = test.take_shared_by_id<BalanceManager>(balance_manager_id_bob);
+        let referral = test.take_shared_by_id<DeepBookPoolReferral>(referral_id_r1);
+        let trade_cap = test.take_from_sender<TradeCap>();
+        balance_manager.set_balance_manager_referral(&referral, &trade_cap);
+        test.return_to_sender(trade_cap);
+        return_shared(referral);
+        return_shared(balance_manager);
+    };
+
+    // BOB places an ask with R1 active
+    let price = 3 * constants::float_scaling();
+    let quantity = 100 * constants::float_scaling();
+
+    place_limit_order<SUI, USDC>(
+        BOB,
+        pool_id,
+        balance_manager_id_bob,
+        1,
+        constants::no_restriction(),
+        constants::self_matching_allowed(),
+        price,
+        quantity,
+        false,
+        true,
+        constants::max_u64(),
+        &mut test,
+    );
+
+    // BOB switches to R2 AFTER placement
+    test.next_tx(BOB);
+    {
+        let mut balance_manager = test.take_shared_by_id<BalanceManager>(balance_manager_id_bob);
+        let referral_r2 = test.take_shared_by_id<DeepBookPoolReferral>(referral_id_r2);
+        let trade_cap = test.take_from_sender<TradeCap>();
+        balance_manager.set_balance_manager_referral(&referral_r2, &trade_cap);
+        test.return_to_sender(trade_cap);
+        return_shared(referral_r2);
+        return_shared(balance_manager);
+    };
+
+    // ALICE fills BOB's order
+    place_market_order<SUI, USDC>(
+        ALICE,
+        pool_id,
+        balance_manager_id_alice,
+        2,
+        constants::self_matching_allowed(),
+        quantity,
+        true,
+        true,
+        &mut test,
+    );
+
+    // R1 (original referral at placement time) should receive the maker referral rewards
+    test.next_tx(ALICE);
+    {
+        let pool = test.take_shared_by_id<Pool<SUI, USDC>>(pool_id);
+
+        let referral_r1 = test.take_shared_by_id<DeepBookPoolReferral>(referral_id_r1);
+        let (base1, quote1, deep1) = pool.get_pool_referral_balances(&referral_r1);
+        let expected_deep = math::mul(
+            math::mul(quantity, constants::deep_multiplier()),
+            maker_fee_rate,
+        );
+        assert_eq!(deep1, expected_deep);
+        assert_eq!(base1, 0);
+        assert_eq!(quote1, 0);
+        return_shared(referral_r1);
+
+        // R2 (new referral) should have zero maker referral rewards
+        let referral_r2 = test.take_shared_by_id<DeepBookPoolReferral>(referral_id_r2);
+        let (base2, quote2, deep2) = pool.get_pool_referral_balances(&referral_r2);
+        assert_eq!(deep2, 0);
+        assert_eq!(base2, 0);
+        assert_eq!(quote2, 0);
+        return_shared(referral_r2);
+
+        return_shared(pool);
+    };
+
+    end(test);
+}
+
 // === Group 8: Locked Balance View ===
 
 #[test]
@@ -2695,6 +2836,717 @@ fun locked_balance_after_cancel_zero_referral() {
         assert_eq!(quote_locked, 0);
         assert_eq!(deep_locked, 0);
         return_shared(balance_manager);
+        return_shared(pool);
+    };
+
+    end(test);
+}
+
+// === Corner Cases ===
+
+// Partial fill → modify → fill remainder
+// Verifies locked_balance is correctly tracked across partial fill, modify, and final fill.
+#[test]
+fun maker_referral_partial_fill_modify_fill_remainder_ok() {
+    let mut test = begin(OWNER);
+    let registry_id = setup_test(OWNER, &mut test);
+    let balance_manager_id_alice = create_acct_and_share_with_funds_typed<SUI, USDC, SUI, DEEP>(
+        ALICE,
+        1_000_000 * constants::float_scaling(),
+        &mut test,
+    );
+    let pool_id = setup_pool_with_default_fees_and_reference_pool<SUI, USDC, SUI, DEEP>(
+        ALICE,
+        registry_id,
+        balance_manager_id_alice,
+        &mut test,
+    );
+    let balance_manager_id_bob = create_acct_and_share_with_funds_typed<SUI, USDC, SUI, DEEP>(
+        BOB,
+        1_000_000 * constants::float_scaling(),
+        &mut test,
+    );
+
+    let maker_fee_rate = 1_000_000;
+    let (referral_id, _) = setup_maker_referral(
+        pool_id,
+        balance_manager_id_bob,
+        0,
+        maker_fee_rate,
+        &mut test,
+    );
+
+    // BOB places ask for 1000 SUI at $3
+    let price = 3 * constants::float_scaling();
+    let original_quantity = 1000 * constants::float_scaling();
+
+    let order_info = place_limit_order<SUI, USDC>(
+        BOB,
+        pool_id,
+        balance_manager_id_bob,
+        1,
+        constants::no_restriction(),
+        constants::self_matching_allowed(),
+        price,
+        original_quantity,
+        false,
+        true,
+        constants::max_u64(),
+        &mut test,
+    );
+    let order_id = order_info.order_id();
+
+    // Step 1: Partial fill 200 SUI
+    let fill1_qty = 200 * constants::float_scaling();
+    place_market_order<SUI, USDC>(
+        ALICE,
+        pool_id,
+        balance_manager_id_alice,
+        2,
+        constants::self_matching_allowed(),
+        fill1_qty,
+        true,
+        true,
+        &mut test,
+    );
+
+    // Check referral got fees for 200 SUI
+    let fee_per_unit = math::mul(constants::deep_multiplier(), maker_fee_rate);
+    let expected_reward_1 = math::mul(fill1_qty, fee_per_unit);
+    test.next_tx(ALICE);
+    {
+        let pool = test.take_shared_by_id<Pool<SUI, USDC>>(pool_id);
+        let referral = test.take_shared_by_id<DeepBookPoolReferral>(referral_id);
+        let (_, _, deep) = pool.get_pool_referral_balances(&referral);
+        assert_eq!(deep, expected_reward_1);
+        return_shared(referral);
+        return_shared(pool);
+    };
+
+    // Step 2: Modify down from remaining 800 to 500 (cancel 300)
+    let new_quantity = 700 * constants::float_scaling(); // 200 filled + 500 remaining
+    modify_order<SUI, USDC>(
+        BOB,
+        pool_id,
+        balance_manager_id_bob,
+        order_id,
+        new_quantity,
+        &mut test,
+    );
+
+    // Step 3: Fill the remaining 500 SUI
+    let fill2_qty = 500 * constants::float_scaling();
+    place_market_order<SUI, USDC>(
+        ALICE,
+        pool_id,
+        balance_manager_id_alice,
+        3,
+        constants::self_matching_allowed(),
+        fill2_qty,
+        true,
+        true,
+        &mut test,
+    );
+
+    // Check total referral rewards = fees for 200 + 500 = 700 SUI
+    // On the final fill (completed), the code sweeps info.locked_balance directly.
+    test.next_tx(ALICE);
+    {
+        let pool = test.take_shared_by_id<Pool<SUI, USDC>>(pool_id);
+        let referral = test.take_shared_by_id<DeepBookPoolReferral>(referral_id);
+        let (base, quote, deep) = pool.get_pool_referral_balances(&referral);
+
+        // locked after placement = fee for 1000 SUI
+        // minus fee for 200 SUI (partial fill 1, transferred to rewards)
+        // minus fee for 300 SUI (modify refund, returned to maker)
+        // = fee for 500 SUI → swept entirely on final completion fill
+        let lock_for_1000 = math::mul(original_quantity, fee_per_unit);
+        let transferred_fill1 = expected_reward_1;
+        let refunded_modify = math::mul(300 * constants::float_scaling(), fee_per_unit);
+        let remaining_locked = lock_for_1000 - transferred_fill1 - refunded_modify;
+        assert_eq!(deep, expected_reward_1 + remaining_locked);
+        assert_eq!(base, 0);
+        assert_eq!(quote, 0);
+
+        // remaining_locked should equal fee for 500 SUI
+        assert_eq!(remaining_locked, math::mul(fill2_qty, fee_per_unit));
+
+        return_shared(referral);
+        return_shared(pool);
+    };
+
+    end(test);
+}
+
+// Self-match with cancel_maker expires the maker and refunds referral lock.
+// BOB places a maker ask with referral, then places a taker bid with cancel_maker
+// from the same balance_manager. The maker is expired, and the referral fee is refunded
+// to settled_balances rather than credited to the referral rewards.
+#[test]
+fun maker_referral_self_match_cancel_maker_refund_ok() {
+    let mut test = begin(OWNER);
+    let registry_id = setup_test(OWNER, &mut test);
+    let balance_manager_id_bob = create_acct_and_share_with_funds_typed<SUI, USDC, SUI, DEEP>(
+        BOB,
+        1_000_000 * constants::float_scaling(),
+        &mut test,
+    );
+    let pool_id = setup_pool_with_default_fees_and_reference_pool<SUI, USDC, SUI, DEEP>(
+        BOB,
+        registry_id,
+        balance_manager_id_bob,
+        &mut test,
+    );
+
+    let maker_fee_rate = 1_000_000;
+    let (referral_id, _) = setup_maker_referral(
+        pool_id,
+        balance_manager_id_bob,
+        0,
+        maker_fee_rate,
+        &mut test,
+    );
+
+    // BOB places maker ask for 100 SUI at $3
+    let price = 3 * constants::float_scaling();
+    let quantity = 100 * constants::float_scaling();
+
+    let bob_deep_before = asset_balance<DEEP>(BOB, balance_manager_id_bob, &mut test);
+
+    place_limit_order<SUI, USDC>(
+        BOB,
+        pool_id,
+        balance_manager_id_bob,
+        1,
+        constants::no_restriction(),
+        constants::self_matching_allowed(),
+        price,
+        quantity,
+        false,
+        true,
+        constants::max_u64(),
+        &mut test,
+    );
+
+    let bob_deep_after_placement = asset_balance<DEEP>(BOB, balance_manager_id_bob, &mut test);
+    let _total_locked = bob_deep_before - bob_deep_after_placement;
+
+    // BOB places taker bid with cancel_maker option (self-match expires the maker)
+    place_market_order<SUI, USDC>(
+        BOB,
+        pool_id,
+        balance_manager_id_bob,
+        2,
+        constants::cancel_maker(),
+        quantity,
+        true,
+        true,
+        &mut test,
+    );
+
+    // The expired maker's referral lock should be refunded to settled_balances.
+    // Referral rewards should remain zero.
+    test.next_tx(BOB);
+    {
+        let pool = test.take_shared_by_id<Pool<SUI, USDC>>(pool_id);
+        let referral = test.take_shared_by_id<DeepBookPoolReferral>(referral_id);
+        let (base, quote, deep) = pool.get_pool_referral_balances(&referral);
+        assert_eq!(base, 0);
+        assert_eq!(quote, 0);
+        assert_eq!(deep, 0);
+        return_shared(referral);
+        return_shared(pool);
+    };
+
+    // After withdrawing settled amounts, BOB should recover the full referral lock
+    withdraw_settled_amounts(pool_id, BOB, balance_manager_id_bob, &mut test);
+    let bob_deep_after_withdraw = asset_balance<DEEP>(BOB, balance_manager_id_bob, &mut test);
+
+    // BOB's DEEP should be restored: the protocol maker fee + referral lock were both refunded
+    // since the maker expired (no actual trade occurred).
+    assert_eq!(bob_deep_after_withdraw, bob_deep_before);
+
+    end(test);
+}
+
+// Same maker places two orders with different referrals.
+// A single taker fills both. Each referral should receive fees only from its order.
+#[test]
+fun maker_referral_two_orders_different_referrals_ok() {
+    let mut test = begin(OWNER);
+    let registry_id = setup_test(OWNER, &mut test);
+    let balance_manager_id_alice = create_acct_and_share_with_funds_typed<SUI, USDC, SUI, DEEP>(
+        ALICE,
+        1_000_000 * constants::float_scaling(),
+        &mut test,
+    );
+    let pool_id = setup_pool_with_default_fees_and_reference_pool<SUI, USDC, SUI, DEEP>(
+        ALICE,
+        registry_id,
+        balance_manager_id_alice,
+        &mut test,
+    );
+    let balance_manager_id_bob = create_acct_and_share_with_funds_typed<SUI, USDC, SUI, DEEP>(
+        BOB,
+        1_000_000 * constants::float_scaling(),
+        &mut test,
+    );
+
+    let maker_fee_rate = 1_000_000;
+
+    // Mint R1 and R2 referrals
+    let referral_id_r1;
+    let referral_id_r2;
+    test.next_tx(ALICE);
+    {
+        let mut pool = test.take_shared_by_id<Pool<SUI, USDC>>(pool_id);
+        referral_id_r1 = pool.mint_referral(0, test.ctx());
+        referral_id_r2 = pool.mint_referral(0, test.ctx());
+        return_shared(pool);
+    };
+    test.next_tx(ALICE);
+    {
+        let mut pool = test.take_shared_by_id<Pool<SUI, USDC>>(pool_id);
+        let referral_r1 = test.take_shared_by_id<DeepBookPoolReferral>(referral_id_r1);
+        pool.update_pool_referral_fee_rate(&referral_r1, 0, maker_fee_rate, test.ctx());
+        return_shared(referral_r1);
+        let referral_r2 = test.take_shared_by_id<DeepBookPoolReferral>(referral_id_r2);
+        pool.update_pool_referral_fee_rate(&referral_r2, 0, maker_fee_rate, test.ctx());
+        return_shared(referral_r2);
+        return_shared(pool);
+    };
+
+    // BOB sets R1, places order #1 (100 SUI ask at $3)
+    test.next_tx(BOB);
+    {
+        let mut balance_manager = test.take_shared_by_id<BalanceManager>(balance_manager_id_bob);
+        let referral = test.take_shared_by_id<DeepBookPoolReferral>(referral_id_r1);
+        let trade_cap = test.take_from_sender<TradeCap>();
+        balance_manager.set_balance_manager_referral(&referral, &trade_cap);
+        test.return_to_sender(trade_cap);
+        return_shared(referral);
+        return_shared(balance_manager);
+    };
+
+    let price = 3 * constants::float_scaling();
+    let qty1 = 100 * constants::float_scaling();
+    place_limit_order<SUI, USDC>(
+        BOB,
+        pool_id,
+        balance_manager_id_bob,
+        1,
+        constants::no_restriction(),
+        constants::self_matching_allowed(),
+        price,
+        qty1,
+        false,
+        true,
+        constants::max_u64(),
+        &mut test,
+    );
+
+    // BOB switches to R2, places order #2 (200 SUI ask at $3)
+    test.next_tx(BOB);
+    {
+        let mut balance_manager = test.take_shared_by_id<BalanceManager>(balance_manager_id_bob);
+        let referral = test.take_shared_by_id<DeepBookPoolReferral>(referral_id_r2);
+        let trade_cap = test.take_from_sender<TradeCap>();
+        balance_manager.set_balance_manager_referral(&referral, &trade_cap);
+        test.return_to_sender(trade_cap);
+        return_shared(referral);
+        return_shared(balance_manager);
+    };
+
+    let qty2 = 200 * constants::float_scaling();
+    place_limit_order<SUI, USDC>(
+        BOB,
+        pool_id,
+        balance_manager_id_bob,
+        2,
+        constants::no_restriction(),
+        constants::self_matching_allowed(),
+        price,
+        qty2,
+        false,
+        true,
+        constants::max_u64(),
+        &mut test,
+    );
+
+    // ALICE fills both with a single market order for 300 SUI
+    let total_qty = qty1 + qty2;
+    place_market_order<SUI, USDC>(
+        ALICE,
+        pool_id,
+        balance_manager_id_alice,
+        3,
+        constants::self_matching_allowed(),
+        total_qty,
+        true,
+        true,
+        &mut test,
+    );
+
+    // R1 should have fees from order #1 (100 SUI)
+    let fee_per_unit = math::mul(constants::deep_multiplier(), maker_fee_rate);
+    test.next_tx(ALICE);
+    {
+        let pool = test.take_shared_by_id<Pool<SUI, USDC>>(pool_id);
+
+        let referral_r1 = test.take_shared_by_id<DeepBookPoolReferral>(referral_id_r1);
+        let (_, _, deep1) = pool.get_pool_referral_balances(&referral_r1);
+        assert_eq!(deep1, math::mul(qty1, fee_per_unit));
+        return_shared(referral_r1);
+
+        // R2 should have fees from order #2 (200 SUI)
+        let referral_r2 = test.take_shared_by_id<DeepBookPoolReferral>(referral_id_r2);
+        let (_, _, deep2) = pool.get_pool_referral_balances(&referral_r2);
+        assert_eq!(deep2, math::mul(qty2, fee_per_unit));
+        return_shared(referral_r2);
+
+        return_shared(pool);
+    };
+
+    end(test);
+}
+
+// swap_exact_quote_for_base fills a maker order that has a referral.
+// The swap creates a temporary balance_manager with no referral. The maker's
+// referral should still receive the fees from process_maker_referral_fills.
+#[test]
+fun maker_referral_swap_fills_maker_order_ok() {
+    let mut test = begin(OWNER);
+    let registry_id = setup_test(OWNER, &mut test);
+    let balance_manager_id_alice = create_acct_and_share_with_funds_typed<SUI, USDC, SUI, DEEP>(
+        ALICE,
+        1_000_000 * constants::float_scaling(),
+        &mut test,
+    );
+    let pool_id = setup_pool_with_default_fees_and_reference_pool<SUI, USDC, SUI, DEEP>(
+        ALICE,
+        registry_id,
+        balance_manager_id_alice,
+        &mut test,
+    );
+    let balance_manager_id_bob = create_acct_and_share_with_funds_typed<SUI, USDC, SUI, DEEP>(
+        BOB,
+        1_000_000 * constants::float_scaling(),
+        &mut test,
+    );
+
+    let maker_fee_rate = 1_000_000;
+    let (referral_id, _) = setup_maker_referral(
+        pool_id,
+        balance_manager_id_bob,
+        0,
+        maker_fee_rate,
+        &mut test,
+    );
+
+    // BOB places maker ask for 100 SUI at $3
+    let price = 3 * constants::float_scaling();
+    let quantity = 100 * constants::float_scaling();
+
+    place_limit_order<SUI, USDC>(
+        BOB,
+        pool_id,
+        balance_manager_id_bob,
+        1,
+        constants::no_restriction(),
+        constants::self_matching_allowed(),
+        price,
+        quantity,
+        false,
+        true,
+        constants::max_u64(),
+        &mut test,
+    );
+
+    // ALICE fills via swap (no balance_manager, no referral on taker side)
+    let quote_to_swap = math::mul(quantity, price); // 300 USDC
+    test.next_tx(ALICE);
+    {
+        let mut pool = test.take_shared_by_id<Pool<SUI, USDC>>(pool_id);
+        let clock = test.take_shared<Clock>();
+        let (base_out, quote_out, deep_out) = pool.swap_exact_quote_for_base<SUI, USDC>(
+            mint_for_testing<USDC>(quote_to_swap, test.ctx()),
+            mint_for_testing<DEEP>(1_000 * constants::float_scaling(), test.ctx()),
+            0,
+            &clock,
+            test.ctx(),
+        );
+        transfer::public_transfer(base_out, ALICE);
+        transfer::public_transfer(quote_out, ALICE);
+        transfer::public_transfer(deep_out, ALICE);
+        return_shared(pool);
+        return_shared(clock);
+    };
+
+    // Maker's referral should have received the fees for 100 SUI
+    let fee_per_unit = math::mul(constants::deep_multiplier(), maker_fee_rate);
+    let expected_deep = math::mul(quantity, fee_per_unit);
+    test.next_tx(ALICE);
+    {
+        let pool = test.take_shared_by_id<Pool<SUI, USDC>>(pool_id);
+        let referral = test.take_shared_by_id<DeepBookPoolReferral>(referral_id);
+        let (base, quote, deep) = pool.get_pool_referral_balances(&referral);
+        assert_eq!(deep, expected_deep);
+        assert_eq!(base, 0);
+        assert_eq!(quote, 0);
+        return_shared(referral);
+        return_shared(pool);
+    };
+
+    end(test);
+}
+
+// Insufficient DEEP for the referral fee lock causes the order placement to abort.
+// The balance manager has enough DEEP for the protocol maker fee but not for the
+// additional referral lock, so the transaction should fail.
+#[test, expected_failure(abort_code = ::deepbook::balance_manager::EBalanceManagerBalanceTooLow)]
+fun maker_referral_insufficient_deep_for_lock_e() {
+    let mut test = begin(OWNER);
+    let registry_id = setup_test(OWNER, &mut test);
+    let balance_manager_id_alice = create_acct_and_share_with_funds_typed<SUI, USDC, SUI, DEEP>(
+        ALICE,
+        1_000_000 * constants::float_scaling(),
+        &mut test,
+    );
+    let pool_id = setup_pool_with_default_fees_and_reference_pool<SUI, USDC, SUI, DEEP>(
+        ALICE,
+        registry_id,
+        balance_manager_id_alice,
+        &mut test,
+    );
+
+    // Create BOB's balance manager with precise amounts:
+    // Enough SUI for collateral, enough DEEP for protocol fee, but NOT for referral lock.
+    // For 100 SUI ask at $3 with pay_with_deep:
+    //   protocol_maker_fee = mul(mul(100e9, 100e9), 500_000) = 5_000_000_000
+    //   referral_lock      = mul(mul(100e9, 100e9), 1_000_000) = 10_000_000_000
+    //   total DEEP needed  = 15_000_000_000
+    // Give BOB exactly 10_000_000_000 DEEP (enough for protocol fee, not enough for both)
+    let balance_manager_id_bob;
+    test.next_tx(BOB);
+    {
+        let mut bm = balance_manager::new(test.ctx());
+        deposit_into_account<SUI>(&mut bm, 1_000_000 * constants::float_scaling(), &mut test);
+        deposit_into_account<USDC>(&mut bm, 1_000_000 * constants::float_scaling(), &mut test);
+        deposit_into_account<DEEP>(&mut bm, 10_000_000_000, &mut test);
+        let trade_cap = bm.mint_trade_cap(test.ctx());
+        transfer::public_transfer(trade_cap, BOB);
+        balance_manager_id_bob = bm.id();
+        transfer::public_share_object(bm);
+    };
+
+    let maker_fee_rate = 1_000_000;
+    let (_, _) = setup_maker_referral(
+        pool_id,
+        balance_manager_id_bob,
+        0,
+        maker_fee_rate,
+        &mut test,
+    );
+
+    // This should abort: BOB has 10e9 DEEP, protocol fee takes 5e9,
+    // leaving 5e9 which is less than the 10e9 referral lock.
+    let price = 3 * constants::float_scaling();
+    let quantity = 100 * constants::float_scaling();
+    place_limit_order<SUI, USDC>(
+        BOB,
+        pool_id,
+        balance_manager_id_bob,
+        1,
+        constants::no_restriction(),
+        constants::self_matching_allowed(),
+        price,
+        quantity,
+        false,
+        true,
+        constants::max_u64(),
+        &mut test,
+    );
+
+    end(test);
+}
+
+// Multiple small partial fills followed by a completion fill.
+// Verifies that locked_balance decreases correctly after each partial fill,
+// and on completion the entire remaining locked_balance is swept to the referral.
+// Total referral rewards must exactly equal the original lock.
+#[test]
+fun maker_referral_many_partial_fills_then_complete_ok() {
+    let mut test = begin(OWNER);
+    let registry_id = setup_test(OWNER, &mut test);
+    let balance_manager_id_alice = create_acct_and_share_with_funds_typed<SUI, USDC, SUI, DEEP>(
+        ALICE,
+        1_000_000 * constants::float_scaling(),
+        &mut test,
+    );
+    let pool_id = setup_pool_with_default_fees_and_reference_pool<SUI, USDC, SUI, DEEP>(
+        ALICE,
+        registry_id,
+        balance_manager_id_alice,
+        &mut test,
+    );
+    let balance_manager_id_bob = create_acct_and_share_with_funds_typed<SUI, USDC, SUI, DEEP>(
+        BOB,
+        1_000_000 * constants::float_scaling(),
+        &mut test,
+    );
+    let balance_manager_id_carol = create_acct_and_share_with_funds_typed<SUI, USDC, SUI, DEEP>(
+        CAROL,
+        1_000_000 * constants::float_scaling(),
+        &mut test,
+    );
+
+    let maker_fee_rate = 1_000_000;
+    let (referral_id, _) = setup_maker_referral(
+        pool_id,
+        balance_manager_id_bob,
+        0,
+        maker_fee_rate,
+        &mut test,
+    );
+
+    // BOB places ask for 100 SUI at $3
+    let price = 3 * constants::float_scaling();
+    let total_quantity = 100 * constants::float_scaling();
+
+    place_limit_order<SUI, USDC>(
+        BOB,
+        pool_id,
+        balance_manager_id_bob,
+        1,
+        constants::no_restriction(),
+        constants::self_matching_allowed(),
+        price,
+        total_quantity,
+        false,
+        true,
+        constants::max_u64(),
+        &mut test,
+    );
+
+    let fee_per_unit = math::mul(constants::deep_multiplier(), maker_fee_rate);
+    let original_lock = math::mul(total_quantity, fee_per_unit);
+
+    // Four small partial fills of 10 SUI each from different takers
+    let small_fill = 10 * constants::float_scaling();
+    let fee_per_fill = math::mul(small_fill, fee_per_unit);
+
+    // Fill 1 (ALICE)
+    place_market_order<SUI, USDC>(
+        ALICE,
+        pool_id,
+        balance_manager_id_alice,
+        2,
+        constants::self_matching_allowed(),
+        small_fill,
+        true,
+        true,
+        &mut test,
+    );
+    test.next_tx(BOB);
+    {
+        let pool = test.take_shared_by_id<Pool<SUI, USDC>>(pool_id);
+        let referral = test.take_shared_by_id<DeepBookPoolReferral>(referral_id);
+        let (_, _, deep) = pool.get_pool_referral_balances(&referral);
+        assert_eq!(deep, fee_per_fill);
+        return_shared(referral);
+        return_shared(pool);
+    };
+
+    // Fill 2 (CAROL)
+    place_market_order<SUI, USDC>(
+        CAROL,
+        pool_id,
+        balance_manager_id_carol,
+        3,
+        constants::self_matching_allowed(),
+        small_fill,
+        true,
+        true,
+        &mut test,
+    );
+    test.next_tx(BOB);
+    {
+        let pool = test.take_shared_by_id<Pool<SUI, USDC>>(pool_id);
+        let referral = test.take_shared_by_id<DeepBookPoolReferral>(referral_id);
+        let (_, _, deep) = pool.get_pool_referral_balances(&referral);
+        assert_eq!(deep, 2 * fee_per_fill);
+        return_shared(referral);
+        return_shared(pool);
+    };
+
+    // Fill 3 (ALICE)
+    place_market_order<SUI, USDC>(
+        ALICE,
+        pool_id,
+        balance_manager_id_alice,
+        4,
+        constants::self_matching_allowed(),
+        small_fill,
+        true,
+        true,
+        &mut test,
+    );
+
+    // Fill 4 (CAROL)
+    place_market_order<SUI, USDC>(
+        CAROL,
+        pool_id,
+        balance_manager_id_carol,
+        5,
+        constants::self_matching_allowed(),
+        small_fill,
+        true,
+        true,
+        &mut test,
+    );
+
+    // 40 SUI filled so far, 60 SUI remaining
+    test.next_tx(BOB);
+    {
+        let pool = test.take_shared_by_id<Pool<SUI, USDC>>(pool_id);
+        let referral = test.take_shared_by_id<DeepBookPoolReferral>(referral_id);
+        let (_, _, deep) = pool.get_pool_referral_balances(&referral);
+        assert_eq!(deep, 4 * fee_per_fill);
+        return_shared(referral);
+
+        // Verify locked_balance still accounts for remaining 60 SUI
+        let balance_manager = test.take_shared_by_id<BalanceManager>(balance_manager_id_bob);
+        let (_, _, deep_locked) = pool.locked_balance(&balance_manager);
+        let remaining_lock = original_lock - 4 * fee_per_fill;
+        assert!(deep_locked >= remaining_lock);
+        return_shared(balance_manager);
+        return_shared(pool);
+    };
+
+    // Final fill: 60 SUI (completion) — triggers sweep of remaining locked_balance
+    let final_fill = 60 * constants::float_scaling();
+    place_market_order<SUI, USDC>(
+        ALICE,
+        pool_id,
+        balance_manager_id_alice,
+        6,
+        constants::self_matching_allowed(),
+        final_fill,
+        true,
+        true,
+        &mut test,
+    );
+
+    // Total referral rewards should exactly equal the original lock
+    test.next_tx(BOB);
+    {
+        let pool = test.take_shared_by_id<Pool<SUI, USDC>>(pool_id);
+        let referral = test.take_shared_by_id<DeepBookPoolReferral>(referral_id);
+        let (base, quote, deep) = pool.get_pool_referral_balances(&referral);
+        assert_eq!(deep, original_lock);
+        assert_eq!(base, 0);
+        assert_eq!(quote, 0);
+        return_shared(referral);
         return_shared(pool);
     };
 
