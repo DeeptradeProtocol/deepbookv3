@@ -536,10 +536,7 @@ public fun modify_order<BaseAsset, QuoteAsset>(
         let (cancel_quantity, order) = inner
             .book
             .modify_order(order_id, new_quantity, clock.timestamp_ms());
-        assert!(
-            order.balance_manager_id() == balance_manager.id(),
-            EInvalidOrderBalanceManager,
-        );
+        assert!(order.balance_manager_id() == balance_manager.id(), EInvalidOrderBalanceManager);
         let (settled, owed) = inner
             .state
             .process_modify(
@@ -600,10 +597,7 @@ public fun cancel_order<BaseAsset, QuoteAsset>(
     let (mut settled, owed) = {
         let inner = self.load_inner_mut();
         let mut order = inner.book.cancel_order(order_id);
-        assert!(
-            order.balance_manager_id() == balance_manager.id(),
-            EInvalidOrderBalanceManager,
-        );
+        assert!(order.balance_manager_id() == balance_manager.id(), EInvalidOrderBalanceManager);
         let (settled, owed) = inner
             .state
             .process_cancel(&mut order, balance_manager.id(), inner.pool_id, ctx);
@@ -2147,9 +2141,7 @@ fun lock_maker_referral_fee<BaseAsset, QuoteAsset>(
         0
     };
 
-    let referral_rewards: &ReferralRewards<BaseAsset, QuoteAsset> = self
-        .id
-        .borrow(referral_id);
+    let referral_rewards: &ReferralRewards<BaseAsset, QuoteAsset> = self.id.borrow(referral_id);
     let multiplier = referral_rewards.multiplier;
 
     let protocol_maker_fee = {
@@ -2185,24 +2177,28 @@ fun lock_maker_referral_fee<BaseAsset, QuoteAsset>(
 
     {
         let inner = self.load_inner_mut();
-        inner.vault.settle_balance_manager(
-            balances::empty(),
-            referral_owed,
-            balance_manager,
-            trade_proof,
-        );
+        inner
+            .vault
+            .settle_balance_manager(
+                balances::empty(),
+                referral_owed,
+                balance_manager,
+                trade_proof,
+            );
     };
 
-    self.id.add(
-        MakerReferralKey(order_info.order_id()),
-        MakerReferralInfo {
-            referral_id,
-            effective_rate,
-            locked_balance: locked_amount,
-            fee_is_deep,
-            is_bid,
-        },
-    );
+    self
+        .id
+        .add(
+            MakerReferralKey(order_info.order_id()),
+            MakerReferralInfo {
+                referral_id,
+                effective_rate,
+                locked_balance: locked_amount,
+                fee_is_deep,
+                is_bid,
+            },
+        );
 }
 
 /// Process fills against maker orders that have pre-locked referral fees.
@@ -2237,19 +2233,23 @@ fun process_maker_referral_fills<BaseAsset, QuoteAsset>(
                 };
                 {
                     let inner = self.load_inner_mut();
-                    inner.state.credit_account_settled_balances(
-                        fill.balance_manager_id(),
-                        refund,
-                        ctx,
-                    );
+                    inner
+                        .state
+                        .credit_account_settled_balances(
+                            fill.balance_manager_id(),
+                            refund,
+                            ctx,
+                        );
                 };
                 df::remove<MakerReferralKey, MakerReferralInfo>(&mut self.id, key);
             } else {
-                let mut fee_balances = fill.maker_deep_price().fee_quantity(
-                    fill.base_quantity(),
-                    fill.quote_quantity(),
-                    info.is_bid,
-                );
+                let mut fee_balances = fill
+                    .maker_deep_price()
+                    .fee_quantity(
+                        fill.base_quantity(),
+                        fill.quote_quantity(),
+                        info.is_bid,
+                    );
                 fee_balances.mul(info.effective_rate);
                 let transfer_amount = if (fill.completed()) {
                     info.locked_balance
@@ -2263,24 +2263,27 @@ fun process_maker_referral_fills<BaseAsset, QuoteAsset>(
                             let inner = self.load_inner_mut();
                             inner.vault.withdraw_referral_fee_deep(transfer_amount)
                         };
-                        let rewards: &mut ReferralRewards<BaseAsset, QuoteAsset> =
-                            self.id.borrow_mut(info.referral_id);
+                        let rewards: &mut ReferralRewards<BaseAsset, QuoteAsset> = self
+                            .id
+                            .borrow_mut(info.referral_id);
                         rewards.deep.join(bal);
                     } else if (info.is_bid) {
                         let bal = {
                             let inner = self.load_inner_mut();
                             inner.vault.withdraw_referral_fee_quote(transfer_amount)
                         };
-                        let rewards: &mut ReferralRewards<BaseAsset, QuoteAsset> =
-                            self.id.borrow_mut(info.referral_id);
+                        let rewards: &mut ReferralRewards<BaseAsset, QuoteAsset> = self
+                            .id
+                            .borrow_mut(info.referral_id);
                         rewards.quote.join(bal);
                     } else {
                         let bal = {
                             let inner = self.load_inner_mut();
                             inner.vault.withdraw_referral_fee_base(transfer_amount)
                         };
-                        let rewards: &mut ReferralRewards<BaseAsset, QuoteAsset> =
-                            self.id.borrow_mut(info.referral_id);
+                        let rewards: &mut ReferralRewards<BaseAsset, QuoteAsset> = self
+                            .id
+                            .borrow_mut(info.referral_id);
                         rewards.base.join(bal);
                     };
 

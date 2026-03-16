@@ -6,11 +6,7 @@ module deepbook::maker_referral_tests;
 
 use deepbook::{
     balance_manager::{BalanceManager, TradeCap, DeepBookPoolReferral},
-    balance_manager_tests::{
-        USDC,
-        create_acct_and_share_with_funds_typed,
-        asset_balance
-    },
+    balance_manager_tests::{USDC, create_acct_and_share_with_funds_typed, asset_balance},
     constants,
     math,
     pool::Pool,
@@ -22,15 +18,11 @@ use deepbook::{
         place_market_order,
         cancel_order,
         modify_order,
-        set_time,
-    },
+        set_time
+    }
 };
 use std::unit_test::assert_eq;
-use sui::{
-    clock::Clock,
-    sui::SUI,
-    test_scenario::{Scenario, begin, end, return_shared}
-};
+use sui::{clock::Clock, sui::SUI, test_scenario::{Scenario, begin, end, return_shared}};
 use token::deep::DEEP;
 
 const OWNER: address = @0x1;
@@ -109,7 +101,7 @@ fun maker_referral_full_fill_ok() {
         price,
         quantity,
         false, // ask
-        true,  // pay_with_deep
+        true, // pay_with_deep
         constants::max_u64(),
         &mut test,
     );
@@ -165,10 +157,13 @@ fun maker_referral_full_fill_ok() {
     // The net difference from before placement to after fill should include the referral amount.
     assert!(bob_deep_before > bob_deep_after_fill);
     // Referral lock = expected_lock should equal the deep rewards
-    assert_eq!(expected_lock, math::mul(
-        math::mul(quantity, constants::deep_multiplier()),
-        maker_fee_rate,
-    ));
+    assert_eq!(
+        expected_lock,
+        math::mul(
+            math::mul(quantity, constants::deep_multiplier()),
+            maker_fee_rate,
+        ),
+    );
 
     end(test);
 }
@@ -237,7 +232,7 @@ fun maker_referral_partial_fill_ok() {
         price,
         total_quantity,
         false, // ask
-        true,  // pay_with_deep
+        true, // pay_with_deep
         constants::max_u64(),
         &mut test,
     );
@@ -492,8 +487,8 @@ fun maker_referral_bid_order_ok() {
         constants::self_matching_allowed(),
         price,
         quantity,
-        true,  // bid
-        true,  // pay_with_deep
+        true, // bid
+        true, // pay_with_deep
         constants::max_u64(),
         &mut test,
     );
@@ -508,7 +503,7 @@ fun maker_referral_bid_order_ok() {
         constants::self_matching_allowed(),
         quantity,
         false, // ask
-        true,  // pay_with_deep
+        true, // pay_with_deep
         &mut test,
     );
 
@@ -564,8 +559,8 @@ fun maker_referral_cancel_full_refund_ok() {
     let (referral_id, _) = setup_maker_referral(
         pool_id,
         balance_manager_id_bob,
-        0,          // multiplier
-        1_000_000,  // maker_fee_rate = 10 bps
+        0, // multiplier
+        1_000_000, // maker_fee_rate = 10 bps
         &mut test,
     );
 
@@ -739,14 +734,32 @@ fun maker_referral_cancel_all_orders_ok() {
     let quantity = 100 * constants::float_scaling();
 
     place_limit_order<SUI, USDC>(
-        BOB, pool_id, balance_manager_id_bob, 1,
-        constants::no_restriction(), constants::self_matching_allowed(),
-        price1, quantity, false, true, constants::max_u64(), &mut test,
+        BOB,
+        pool_id,
+        balance_manager_id_bob,
+        1,
+        constants::no_restriction(),
+        constants::self_matching_allowed(),
+        price1,
+        quantity,
+        false,
+        true,
+        constants::max_u64(),
+        &mut test,
     );
     place_limit_order<SUI, USDC>(
-        BOB, pool_id, balance_manager_id_bob, 2,
-        constants::no_restriction(), constants::self_matching_allowed(),
-        price2, quantity, false, true, constants::max_u64(), &mut test,
+        BOB,
+        pool_id,
+        balance_manager_id_bob,
+        2,
+        constants::no_restriction(),
+        constants::self_matching_allowed(),
+        price2,
+        quantity,
+        false,
+        true,
+        constants::max_u64(),
+        &mut test,
     );
 
     cancel_all_orders(pool_id, BOB, balance_manager_id_bob, &mut test);
@@ -813,12 +826,7 @@ fun setup_maker_referral(
     (referral_id, maker_fee_rate)
 }
 
-fun cancel_all_orders(
-    pool_id: ID,
-    owner: address,
-    balance_manager_id: ID,
-    test: &mut Scenario,
-) {
+fun cancel_all_orders(pool_id: ID, owner: address, balance_manager_id: ID, test: &mut Scenario) {
     test.next_tx(owner);
     {
         let mut pool = test.take_shared_by_id<Pool<SUI, USDC>>(pool_id);
@@ -1209,7 +1217,7 @@ fun maker_referral_ask_non_deep_base_fee_ok() {
     let pool_id = setup_pool_with_default_fees<SUI, USDC>(
         OWNER,
         registry_id,
-        true,  // whitelisted
+        true, // whitelisted
         false, // not stable
         &mut test,
     );
@@ -1263,7 +1271,7 @@ fun maker_referral_ask_non_deep_base_fee_ok() {
         2,
         constants::self_matching_allowed(),
         quantity,
-        true,  // bid
+        true, // bid
         false, // pay_with_deep = false
         &mut test,
     );
@@ -1302,7 +1310,7 @@ fun maker_referral_bid_non_deep_quote_fee_ok() {
     let pool_id = setup_pool_with_default_fees<SUI, USDC>(
         OWNER,
         registry_id,
-        true,  // whitelisted
+        true, // whitelisted
         false,
         &mut test,
     );
@@ -1341,7 +1349,7 @@ fun maker_referral_bid_non_deep_quote_fee_ok() {
         constants::self_matching_allowed(),
         price,
         quantity,
-        true,  // bid
+        true, // bid
         false, // pay_with_deep = false
         constants::max_u64(),
         &mut test,
@@ -1499,14 +1507,30 @@ fun maker_referral_multiplier_only_ok() {
     let quantity = 100 * constants::float_scaling();
 
     place_limit_order<SUI, USDC>(
-        BOB, pool_id, balance_manager_id_bob, 1,
-        constants::no_restriction(), constants::self_matching_allowed(),
-        price, quantity, false, true, constants::max_u64(), &mut test,
+        BOB,
+        pool_id,
+        balance_manager_id_bob,
+        1,
+        constants::no_restriction(),
+        constants::self_matching_allowed(),
+        price,
+        quantity,
+        false,
+        true,
+        constants::max_u64(),
+        &mut test,
     );
 
     place_market_order<SUI, USDC>(
-        ALICE, pool_id, balance_manager_id_alice, 2,
-        constants::self_matching_allowed(), quantity, true, true, &mut test,
+        ALICE,
+        pool_id,
+        balance_manager_id_alice,
+        2,
+        constants::self_matching_allowed(),
+        quantity,
+        true,
+        true,
+        &mut test,
     );
 
     test.next_tx(ALICE);
@@ -1569,14 +1593,30 @@ fun maker_referral_fee_rate_only_ok() {
     let quantity = 100 * constants::float_scaling();
 
     place_limit_order<SUI, USDC>(
-        BOB, pool_id, balance_manager_id_bob, 1,
-        constants::no_restriction(), constants::self_matching_allowed(),
-        price, quantity, false, true, constants::max_u64(), &mut test,
+        BOB,
+        pool_id,
+        balance_manager_id_bob,
+        1,
+        constants::no_restriction(),
+        constants::self_matching_allowed(),
+        price,
+        quantity,
+        false,
+        true,
+        constants::max_u64(),
+        &mut test,
     );
 
     place_market_order<SUI, USDC>(
-        ALICE, pool_id, balance_manager_id_alice, 2,
-        constants::self_matching_allowed(), quantity, true, true, &mut test,
+        ALICE,
+        pool_id,
+        balance_manager_id_alice,
+        2,
+        constants::self_matching_allowed(),
+        quantity,
+        true,
+        true,
+        &mut test,
     );
 
     test.next_tx(ALICE);
@@ -1637,14 +1677,30 @@ fun maker_referral_both_rate_and_multiplier_ok() {
     let quantity = 100 * constants::float_scaling();
 
     place_limit_order<SUI, USDC>(
-        BOB, pool_id, balance_manager_id_bob, 1,
-        constants::no_restriction(), constants::self_matching_allowed(),
-        price, quantity, false, true, constants::max_u64(), &mut test,
+        BOB,
+        pool_id,
+        balance_manager_id_bob,
+        1,
+        constants::no_restriction(),
+        constants::self_matching_allowed(),
+        price,
+        quantity,
+        false,
+        true,
+        constants::max_u64(),
+        &mut test,
     );
 
     place_market_order<SUI, USDC>(
-        ALICE, pool_id, balance_manager_id_alice, 2,
-        constants::self_matching_allowed(), quantity, true, true, &mut test,
+        ALICE,
+        pool_id,
+        balance_manager_id_alice,
+        2,
+        constants::self_matching_allowed(),
+        quantity,
+        true,
+        true,
+        &mut test,
     );
 
     test.next_tx(ALICE);
@@ -1707,9 +1763,18 @@ fun maker_referral_zero_effective_rate_no_lock() {
     let quantity = 100 * constants::float_scaling();
 
     place_limit_order<SUI, USDC>(
-        BOB, pool_id, balance_manager_id_bob, 1,
-        constants::no_restriction(), constants::self_matching_allowed(),
-        price, quantity, false, true, constants::max_u64(), &mut test,
+        BOB,
+        pool_id,
+        balance_manager_id_bob,
+        1,
+        constants::no_restriction(),
+        constants::self_matching_allowed(),
+        price,
+        quantity,
+        false,
+        true,
+        constants::max_u64(),
+        &mut test,
     );
 
     let bob_deep_after_placement = asset_balance<DEEP>(BOB, balance_manager_id_bob, &mut test);
@@ -1723,8 +1788,15 @@ fun maker_referral_zero_effective_rate_no_lock() {
 
     // Fill the order
     place_market_order<SUI, USDC>(
-        ALICE, pool_id, balance_manager_id_alice, 2,
-        constants::self_matching_allowed(), quantity, true, true, &mut test,
+        ALICE,
+        pool_id,
+        balance_manager_id_alice,
+        2,
+        constants::self_matching_allowed(),
+        quantity,
+        true,
+        true,
+        &mut test,
     );
 
     // Referral rewards should be 0
@@ -1779,15 +1851,31 @@ fun maker_referral_market_order_no_lock() {
     let price = 3 * constants::float_scaling();
     let quantity = 100 * constants::float_scaling();
     place_limit_order<SUI, USDC>(
-        ALICE, pool_id, balance_manager_id_alice, 1,
-        constants::no_restriction(), constants::self_matching_allowed(),
-        price, quantity, false, true, constants::max_u64(), &mut test,
+        ALICE,
+        pool_id,
+        balance_manager_id_alice,
+        1,
+        constants::no_restriction(),
+        constants::self_matching_allowed(),
+        price,
+        quantity,
+        false,
+        true,
+        constants::max_u64(),
+        &mut test,
     );
 
     // BOB places a market bid order (fully filled as taker, never rests in book)
     place_market_order<SUI, USDC>(
-        BOB, pool_id, balance_manager_id_bob, 2,
-        constants::self_matching_allowed(), quantity, true, true, &mut test,
+        BOB,
+        pool_id,
+        balance_manager_id_bob,
+        2,
+        constants::self_matching_allowed(),
+        quantity,
+        true,
+        true,
+        &mut test,
     );
 
     // No maker referral rewards should be created (BOB was taker)
@@ -1840,16 +1928,34 @@ fun maker_referral_ioc_fully_filled_no_lock() {
     let price = 3 * constants::float_scaling();
     let quantity = 100 * constants::float_scaling();
     place_limit_order<SUI, USDC>(
-        ALICE, pool_id, balance_manager_id_alice, 1,
-        constants::no_restriction(), constants::self_matching_allowed(),
-        price, quantity, false, true, constants::max_u64(), &mut test,
+        ALICE,
+        pool_id,
+        balance_manager_id_alice,
+        1,
+        constants::no_restriction(),
+        constants::self_matching_allowed(),
+        price,
+        quantity,
+        false,
+        true,
+        constants::max_u64(),
+        &mut test,
     );
 
     // BOB places IOC bid that fully fills (order_inserted = false)
     let order_info = place_limit_order<SUI, USDC>(
-        BOB, pool_id, balance_manager_id_bob, 2,
-        constants::immediate_or_cancel(), constants::self_matching_allowed(),
-        price, quantity, true, true, constants::max_u64(), &mut test,
+        BOB,
+        pool_id,
+        balance_manager_id_bob,
+        2,
+        constants::immediate_or_cancel(),
+        constants::self_matching_allowed(),
+        price,
+        quantity,
+        true,
+        true,
+        constants::max_u64(),
+        &mut test,
     );
     assert!(!order_info.order_inserted());
 
@@ -1897,9 +2003,18 @@ fun maker_referral_no_referral_set_no_lock() {
     let quantity = 100 * constants::float_scaling();
 
     place_limit_order<SUI, USDC>(
-        BOB, pool_id, balance_manager_id_bob, 1,
-        constants::no_restriction(), constants::self_matching_allowed(),
-        price, quantity, false, true, constants::max_u64(), &mut test,
+        BOB,
+        pool_id,
+        balance_manager_id_bob,
+        1,
+        constants::no_restriction(),
+        constants::self_matching_allowed(),
+        price,
+        quantity,
+        false,
+        true,
+        constants::max_u64(),
+        &mut test,
     );
 
     let bob_deep_after = asset_balance<DEEP>(BOB, balance_manager_id_bob, &mut test);
@@ -1998,15 +2113,31 @@ fun maker_referral_taker_and_maker_referral_simultaneous_ok() {
     let quantity = 100 * constants::float_scaling();
 
     place_limit_order<SUI, USDC>(
-        BOB, pool_id, balance_manager_id_bob, 1,
-        constants::no_restriction(), constants::self_matching_allowed(),
-        price, quantity, false, true, constants::max_u64(), &mut test,
+        BOB,
+        pool_id,
+        balance_manager_id_bob,
+        1,
+        constants::no_restriction(),
+        constants::self_matching_allowed(),
+        price,
+        quantity,
+        false,
+        true,
+        constants::max_u64(),
+        &mut test,
     );
 
     // ALICE places bid market (taker), filling BOB
     place_market_order<SUI, USDC>(
-        ALICE, pool_id, balance_manager_id_alice, 2,
-        constants::self_matching_allowed(), quantity, true, true, &mut test,
+        ALICE,
+        pool_id,
+        balance_manager_id_alice,
+        2,
+        constants::self_matching_allowed(),
+        quantity,
+        true,
+        true,
+        &mut test,
     );
 
     // Check R1 (taker referral) rewards
@@ -2108,21 +2239,46 @@ fun maker_referral_multiple_makers_single_taker_ok() {
     let quantity = 100 * constants::float_scaling();
 
     place_limit_order<SUI, USDC>(
-        BOB, pool_id, balance_manager_id_bob, 1,
-        constants::no_restriction(), constants::self_matching_allowed(),
-        price, quantity, false, true, constants::max_u64(), &mut test,
+        BOB,
+        pool_id,
+        balance_manager_id_bob,
+        1,
+        constants::no_restriction(),
+        constants::self_matching_allowed(),
+        price,
+        quantity,
+        false,
+        true,
+        constants::max_u64(),
+        &mut test,
     );
     place_limit_order<SUI, USDC>(
-        CAROL, pool_id, balance_manager_id_carol, 1,
-        constants::no_restriction(), constants::self_matching_allowed(),
-        price, quantity, false, true, constants::max_u64(), &mut test,
+        CAROL,
+        pool_id,
+        balance_manager_id_carol,
+        1,
+        constants::no_restriction(),
+        constants::self_matching_allowed(),
+        price,
+        quantity,
+        false,
+        true,
+        constants::max_u64(),
+        &mut test,
     );
 
     // ALICE buys 200 SUI (fills both BOB and CAROL)
     let total_quantity = 200 * constants::float_scaling();
     place_market_order<SUI, USDC>(
-        ALICE, pool_id, balance_manager_id_alice, 2,
-        constants::self_matching_allowed(), total_quantity, true, true, &mut test,
+        ALICE,
+        pool_id,
+        balance_manager_id_alice,
+        2,
+        constants::self_matching_allowed(),
+        total_quantity,
+        true,
+        true,
+        &mut test,
     );
 
     // Check BOB's referral rewards
@@ -2189,14 +2345,30 @@ fun maker_referral_claim_rewards_after_fills_ok() {
     let quantity = 100 * constants::float_scaling();
 
     place_limit_order<SUI, USDC>(
-        BOB, pool_id, balance_manager_id_bob, 1,
-        constants::no_restriction(), constants::self_matching_allowed(),
-        price, quantity, false, true, constants::max_u64(), &mut test,
+        BOB,
+        pool_id,
+        balance_manager_id_bob,
+        1,
+        constants::no_restriction(),
+        constants::self_matching_allowed(),
+        price,
+        quantity,
+        false,
+        true,
+        constants::max_u64(),
+        &mut test,
     );
 
     place_market_order<SUI, USDC>(
-        ALICE, pool_id, balance_manager_id_alice, 2,
-        constants::self_matching_allowed(), quantity, true, true, &mut test,
+        ALICE,
+        pool_id,
+        balance_manager_id_alice,
+        2,
+        constants::self_matching_allowed(),
+        quantity,
+        true,
+        true,
+        &mut test,
     );
 
     let expected_deep = math::mul(
@@ -2279,16 +2451,34 @@ fun locked_balance_includes_referral_amount() {
 
     // BOB places ask with referral
     place_limit_order<SUI, USDC>(
-        BOB, pool_id, balance_manager_id_bob, 1,
-        constants::no_restriction(), constants::self_matching_allowed(),
-        price, quantity, false, true, constants::max_u64(), &mut test,
+        BOB,
+        pool_id,
+        balance_manager_id_bob,
+        1,
+        constants::no_restriction(),
+        constants::self_matching_allowed(),
+        price,
+        quantity,
+        false,
+        true,
+        constants::max_u64(),
+        &mut test,
     );
 
     // CAROL places same ask without referral
     place_limit_order<SUI, USDC>(
-        CAROL, pool_id, balance_manager_id_carol, 1,
-        constants::no_restriction(), constants::self_matching_allowed(),
-        price, quantity, false, true, constants::max_u64(), &mut test,
+        CAROL,
+        pool_id,
+        balance_manager_id_carol,
+        1,
+        constants::no_restriction(),
+        constants::self_matching_allowed(),
+        price,
+        quantity,
+        false,
+        true,
+        constants::max_u64(),
+        &mut test,
     );
 
     // Compare locked balances
@@ -2296,7 +2486,9 @@ fun locked_balance_includes_referral_amount() {
     {
         let pool = test.take_shared_by_id<Pool<SUI, USDC>>(pool_id);
         let balance_manager_bob = test.take_shared_by_id<BalanceManager>(balance_manager_id_bob);
-        let balance_manager_carol = test.take_shared_by_id<BalanceManager>(balance_manager_id_carol);
+        let balance_manager_carol = test.take_shared_by_id<BalanceManager>(
+            balance_manager_id_carol,
+        );
 
         let (_, _, deep_locked_bob) = pool.locked_balance(&balance_manager_bob);
         let (_, _, deep_locked_carol) = pool.locked_balance(&balance_manager_carol);
@@ -2350,9 +2542,18 @@ fun locked_balance_after_partial_fill() {
     let total_quantity = 1000 * constants::float_scaling();
 
     place_limit_order<SUI, USDC>(
-        BOB, pool_id, balance_manager_id_bob, 1,
-        constants::no_restriction(), constants::self_matching_allowed(),
-        price, total_quantity, false, true, constants::max_u64(), &mut test,
+        BOB,
+        pool_id,
+        balance_manager_id_bob,
+        1,
+        constants::no_restriction(),
+        constants::self_matching_allowed(),
+        price,
+        total_quantity,
+        false,
+        true,
+        constants::max_u64(),
+        &mut test,
     );
 
     // Get locked balance before fill
@@ -2370,8 +2571,15 @@ fun locked_balance_after_partial_fill() {
     // Partial fill 400
     let fill_quantity = 400 * constants::float_scaling();
     place_market_order<SUI, USDC>(
-        ALICE, pool_id, balance_manager_id_alice, 2,
-        constants::self_matching_allowed(), fill_quantity, true, true, &mut test,
+        ALICE,
+        pool_id,
+        balance_manager_id_alice,
+        2,
+        constants::self_matching_allowed(),
+        fill_quantity,
+        true,
+        true,
+        &mut test,
     );
 
     // Get locked balance after fill
@@ -2442,9 +2650,18 @@ fun locked_balance_after_cancel_zero_referral() {
     let quantity = 100 * constants::float_scaling();
 
     let order_info = place_limit_order<SUI, USDC>(
-        BOB, pool_id, balance_manager_id_bob, 1,
-        constants::no_restriction(), constants::self_matching_allowed(),
-        price, quantity, false, true, constants::max_u64(), &mut test,
+        BOB,
+        pool_id,
+        balance_manager_id_bob,
+        1,
+        constants::no_restriction(),
+        constants::self_matching_allowed(),
+        price,
+        quantity,
+        false,
+        true,
+        constants::max_u64(),
+        &mut test,
     );
     let order_id = order_info.order_id();
 
