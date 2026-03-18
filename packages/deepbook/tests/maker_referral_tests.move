@@ -3552,3 +3552,217 @@ fun maker_referral_many_partial_fills_then_complete_ok() {
 
     end(test);
 }
+
+// === Group 9: Max Fills Stress Tests ===
+
+// Verifies that a taker order matching exactly MAX_FILLS (100) maker orders without any
+// referrals completes successfully and the taker receives the full quantity.
+#[test]
+fun max_fills_no_referrals_ok() {
+    let mut test = begin(OWNER);
+    let registry_id = setup_test(OWNER, &mut test);
+    let balance_manager_id_alice = create_acct_and_share_with_funds_typed<SUI, USDC, SUI, DEEP>(
+        ALICE,
+        1_000_000 * constants::float_scaling(),
+        &mut test,
+    );
+    let pool_id = setup_pool_with_default_fees_and_reference_pool<SUI, USDC, SUI, DEEP>(
+        ALICE,
+        registry_id,
+        balance_manager_id_alice,
+        &mut test,
+    );
+    let balance_manager_id_bob = create_acct_and_share_with_funds_typed<SUI, USDC, SUI, DEEP>(
+        BOB,
+        1_000_000 * constants::float_scaling(),
+        &mut test,
+    );
+
+    let price = 2 * constants::float_scaling();
+    let quantity = 1 * constants::float_scaling();
+    let num_orders = constants::max_fills();
+
+    // BOB places 100 ask orders at $2 (no referral set)
+    let mut i = 0;
+    while (i < num_orders) {
+        place_limit_order<SUI, USDC>(
+            BOB,
+            pool_id,
+            balance_manager_id_bob,
+            i + 1,
+            constants::no_restriction(),
+            constants::self_matching_allowed(),
+            price,
+            quantity,
+            false, // ask
+            true, // pay_with_deep
+            constants::max_u64(),
+            &mut test,
+        );
+        i = i + 1;
+    };
+
+    // ALICE places a single bid that sweeps all 100 asks in one matching pass
+    let total_quantity = num_orders * quantity;
+    let order_info = place_limit_order<SUI, USDC>(
+        ALICE,
+        pool_id,
+        balance_manager_id_alice,
+        num_orders + 1,
+        constants::no_restriction(),
+        constants::self_matching_allowed(),
+        price,
+        total_quantity,
+        true, // bid
+        true,
+        constants::max_u64(),
+        &mut test,
+    );
+
+    // All 100 orders were matched; taker is fully filled and not inserted into the book
+    assert_eq!(order_info.executed_quantity(), total_quantity);
+    assert!(!order_info.order_inserted());
+
+    end(test);
+}
+
+// Verifies that a taker order matching exactly MAX_FILLS (100) maker orders where every
+// maker has a distinct referral completes successfully and each referral receives the
+// correct fee. The referral_id is snapshotted into MakerReferralInfo at placement time,
+// so swapping BOB's referral between placements produces 100 independent reward buckets.
+#[test]
+fun max_fills_all_different_referrals_ok() {
+    let mut test = begin(OWNER);
+    let registry_id = setup_test(OWNER, &mut test);
+    let balance_manager_id_alice = create_acct_and_share_with_funds_typed<SUI, USDC, SUI, DEEP>(
+        ALICE,
+        1_000_000 * constants::float_scaling(),
+        &mut test,
+    );
+    let pool_id = setup_pool_with_default_fees_and_reference_pool<SUI, USDC, SUI, DEEP>(
+        ALICE,
+        registry_id,
+        balance_manager_id_alice,
+        &mut test,
+    );
+    let balance_manager_id_bob = create_acct_and_share_with_funds_typed<SUI, USDC, SUI, DEEP>(
+        BOB,
+        1_000_000 * constants::float_scaling(),
+        &mut test,
+    );
+
+    let price = 2 * constants::float_scaling();
+    let quantity = 1 * constants::float_scaling();
+    let maker_fee_rate = 1_000_000; // 10 bps
+    let num_orders = constants::max_fills();
+
+    // For each of the 100 orders:
+    //   1. ALICE mints a fresh referral and configures its maker_fee_rate.
+    //   2. BOB updates his balance manager referral to this new one, then places the ask.
+    // Because the referral_id is captured in MakerReferralInfo at placement time, each
+    // resting order points to a different referral object.
+    let mut referral_ids: vector<ID> = vector[];
+    let mut i = 0;
+    while (i < num_orders) {
+        // Mint a new referral (ALICE is the referral owner)
+        let mut referral_id;
+        test.next_tx(ALICE);
+        {
+            let mut pool = test.take_shared_by_id<Pool<SUI, USDC>>(pool_id);
+            referral_id = pool.mint_referral(0, test.ctx());
+            return_shared(pool);
+        };
+
+        // Configure the maker_fee_rate on the new referral
+        test.next_tx(ALICE);
+        {
+            let mut pool = test.take_shared_by_id<Pool<SUI, USDC>>(pool_id);
+            let referral = test.take_shared_by_id<DeepBookPoolReferral>(referral_id);
+            pool.update_pool_referral_fee_rate(&referral, 0, maker_fee_rate, test.ctx());
+            return_shared(referral);
+            return_shared(pool);
+        };
+
+        // BOB sets this referral on his BM and places one ask order in the same tx,
+        // so the MakerReferralInfo DF for this order captures the new referral_id.
+        test.next_tx(BOB);
+        {
+            let mut pool = test.take_shared_by_id<Pool<SUI, USDC>>(pool_id);
+            let clock = test.take_shared<Clock>();
+            let mut balance_manager = test.take_shared_by_id<BalanceManager>(
+                balance_manager_id_bob,
+            );
+            let referral = test.take_shared_by_id<DeepBookPoolReferral>(referral_id);
+            let trade_cap = test.take_from_sender<TradeCap>();
+            balance_manager.set_balance_manager_referral(&referral, &trade_cap);
+            let trade_proof = balance_manager.generate_proof_as_owner(test.ctx());
+            pool.place_limit_order<SUI, USDC>(
+                &mut balance_manager,
+                &trade_proof,
+                i + 1,
+                constants::no_restriction(),
+                constants::self_matching_allowed(),
+                price,
+                quantity,
+                false, // ask
+                true, // pay_with_deep
+                constants::max_u64(),
+                &clock,
+                test.ctx(),
+            );
+            test.return_to_sender(trade_cap);
+            return_shared(referral);
+            return_shared(pool);
+            return_shared(clock);
+            return_shared(balance_manager);
+        };
+
+        referral_ids.push_back(referral_id);
+        i = i + 1;
+    };
+
+    // ALICE sweeps all 100 asks in a single taker bid
+    let total_quantity = num_orders * quantity;
+    let order_info = place_limit_order<SUI, USDC>(
+        ALICE,
+        pool_id,
+        balance_manager_id_alice,
+        num_orders + 1,
+        constants::no_restriction(),
+        constants::self_matching_allowed(),
+        price,
+        total_quantity,
+        true, // bid
+        true,
+        constants::max_u64(),
+        &mut test,
+    );
+
+    // Taker was fully filled across all 100 maker orders
+    assert_eq!(order_info.executed_quantity(), total_quantity);
+    assert!(!order_info.order_inserted());
+
+    // Each referral should have received exactly the fee for 1 SUI filled:
+    //   fee_per_order = mul(mul(quantity, deep_multiplier), maker_fee_rate)
+    let fee_per_order = math::mul(
+        math::mul(quantity, constants::deep_multiplier()),
+        maker_fee_rate,
+    );
+    test.next_tx(ALICE);
+    {
+        let pool = test.take_shared_by_id<Pool<SUI, USDC>>(pool_id);
+        let mut j = 0;
+        while (j < num_orders) {
+            let referral = test.take_shared_by_id<DeepBookPoolReferral>(referral_ids[j]);
+            let (base, quote, deep) = pool.get_pool_referral_balances(&referral);
+            assert_eq!(deep, fee_per_order);
+            assert_eq!(base, 0);
+            assert_eq!(quote, 0);
+            return_shared(referral);
+            j = j + 1;
+        };
+        return_shared(pool);
+    };
+
+    end(test);
+}
