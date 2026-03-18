@@ -433,6 +433,20 @@ public(package) fun history(self: &State): &History {
     &self.history
 }
 
+/// Credit settled balances to an account by balance_manager_id.
+/// Used to refund maker referral fees when orders expire during matching
+/// (maker's BalanceManager is unavailable at that point).
+public(package) fun credit_account_settled_balances(
+    self: &mut State,
+    balance_manager_id: ID,
+    balances: Balances,
+    ctx: &TxContext,
+) {
+    self.update_account(balance_manager_id, ctx);
+    let account = &mut self.accounts[balance_manager_id];
+    account.add_settled_balances(balances);
+}
+
 // === Private Functions ===
 /// Process fills for all makers. Update maker accounts and history.
 fun process_fills(self: &mut State, fills: &mut vector<Fill>, ctx: &TxContext) {
