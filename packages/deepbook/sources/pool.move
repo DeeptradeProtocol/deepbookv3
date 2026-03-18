@@ -1562,6 +1562,7 @@ public fun locked_balance<BaseAsset, QuoteAsset>(
         quote_quantity = quote_quantity + locked_balance.quote();
         deep_quantity = deep_quantity + locked_balance.deep();
 
+        // Include the pre-locked maker referral fee for this order, if any.
         let key = MakerReferralKey(order.order_id());
         if (self.id.exists_(key)) {
             let info: &MakerReferralInfo = self.id.borrow(key);
@@ -2122,18 +2123,22 @@ fun process_referral_fees<BaseAsset, QuoteAsset>(
 /// Pre-lock the maker referral fee into the Vault when a limit order rests
 /// in the book. The fee is calculated from the effective rate (volume-based +
 /// multiplier on protocol maker fee) and the order's remaining quantity.
+/// A `MakerReferralInfo` dynamic field keyed by order ID is attached to the pool for settlement.
 fun lock_maker_referral_fee<BaseAsset, QuoteAsset>(
     self: &mut Pool<BaseAsset, QuoteAsset>,
     order_info: &OrderInfo,
     balance_manager: &mut BalanceManager,
     trade_proof: &TradeProof,
 ) {
+    // Only resting (inserted) orders have a maker phase.
     if (!order_info.order_inserted()) return;
 
+    // Skip if the balance manager has no referral on this pool.
     let referral_id = balance_manager.get_balance_manager_referral_id(self.id());
     if (referral_id.is_none()) return;
     let referral_id = referral_id.destroy_some();
 
+    // Volume-based bps rate configured by the referral owner; 0 if not set.
     let maker_fee_rate = if (self.id.exists_(ReferralFeeConfigKey(referral_id))) {
         let config: &ReferralFeeConfig = self.id.borrow(ReferralFeeConfigKey(referral_id));
         config.maker_fee_rate
@@ -2144,6 +2149,7 @@ fun lock_maker_referral_fee<BaseAsset, QuoteAsset>(
     let referral_rewards: &ReferralRewards<BaseAsset, QuoteAsset> = self.id.borrow(referral_id);
     let multiplier = referral_rewards.multiplier;
 
+    // Effective rate combines the configured bps fee and a scaled protocol maker fee.
     let protocol_maker_fee = {
         let inner = self.load_inner();
         inner.state.governance().trade_params().maker_fee()
@@ -2152,6 +2158,7 @@ fun lock_maker_referral_fee<BaseAsset, QuoteAsset>(
     let effective_rate = maker_fee_rate + math::mul(protocol_maker_fee, multiplier);
     if (effective_rate == 0) return;
 
+    // Compute the fee on the full remaining quantity at order price.
     let remaining_qty = order_info.remaining_quantity();
     let price = order_info.price();
     let is_bid = order_info.is_bid();
@@ -2167,6 +2174,7 @@ fun lock_maker_referral_fee<BaseAsset, QuoteAsset>(
     let locked_amount = fee_balances.non_zero_value();
     if (locked_amount == 0) return;
 
+    // Asset in which the fee is denominated: DEEP, quote (bid), or base (ask).
     let referral_owed = if (fee_is_deep) {
         balances::new(0, 0, locked_amount)
     } else if (is_bid) {
@@ -2175,6 +2183,7 @@ fun lock_maker_referral_fee<BaseAsset, QuoteAsset>(
         balances::new(locked_amount, 0, 0)
     };
 
+    // Pre-lock the fee: transfer it from the balance manager to the Vault.
     {
         let inner = self.load_inner_mut();
         inner
@@ -2187,6 +2196,7 @@ fun lock_maker_referral_fee<BaseAsset, QuoteAsset>(
             );
     };
 
+    // Attach referral metadata to the pool (keyed by order ID) for future settlement.
     self
         .id
         .add(
@@ -2221,9 +2231,11 @@ fun process_maker_referral_fills<BaseAsset, QuoteAsset>(
         let key = MakerReferralKey(fill.maker_order_id());
 
         if (self.id.exists_(key)) {
+            // This maker order has a referral fee pre-locked in the Vault.
             let info: MakerReferralInfo = *self.id.borrow(key);
 
             if (fill.expired()) {
+                // Order expired before filling; return the locked fee to the maker.
                 let refund = if (info.fee_is_deep) {
                     balances::new(0, 0, info.locked_balance)
                 } else if (info.is_bid) {
@@ -2241,8 +2253,10 @@ fun process_maker_referral_fills<BaseAsset, QuoteAsset>(
                             ctx,
                         );
                 };
+                // Remove the DF since the order is gone.
                 df::remove<MakerReferralKey, MakerReferralInfo>(&mut self.id, key);
             } else {
+                // Compute the fee owed for this fill's quantity.
                 let mut fee_balances = fill
                     .maker_deep_price()
                     .fee_quantity(
@@ -2251,6 +2265,8 @@ fun process_maker_referral_fills<BaseAsset, QuoteAsset>(
                         info.is_bid,
                     );
                 fee_balances.mul(info.effective_rate);
+                // On the final fill use the full remaining locked balance to avoid dust.
+                // On a partial fill use the proportional amount for this fill's quantity.
                 let transfer_amount = if (fill.completed()) {
                     info.locked_balance
                 } else {
@@ -2258,6 +2274,7 @@ fun process_maker_referral_fills<BaseAsset, QuoteAsset>(
                 };
 
                 if (transfer_amount > 0) {
+                    // Withdraw from the Vault and credit the referral's rewards balance.
                     if (info.fee_is_deep) {
                         let bal = {
                             let inner = self.load_inner_mut();
@@ -2287,6 +2304,7 @@ fun process_maker_referral_fills<BaseAsset, QuoteAsset>(
                         rewards.base.join(bal);
                     };
 
+                    // Emit referral fee event with the transferred amount.
                     let (base_fee, quote_fee, deep_fee) = if (info.fee_is_deep) {
                         (0, 0, transfer_amount)
                     } else if (info.is_bid) {
@@ -2304,8 +2322,10 @@ fun process_maker_referral_fills<BaseAsset, QuoteAsset>(
                 };
 
                 if (fill.completed()) {
+                    // Order fully filled; remove the DF.
                     df::remove<MakerReferralKey, MakerReferralInfo>(&mut self.id, key);
                 } else if (transfer_amount > 0) {
+                    // Order still live; reduce the locked balance by what was just transferred.
                     let info_mut: &mut MakerReferralInfo = self.id.borrow_mut(key);
                     info_mut.locked_balance = info_mut.locked_balance - transfer_amount;
                 };
