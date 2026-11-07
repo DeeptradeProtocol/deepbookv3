@@ -47,8 +47,9 @@ and contributors. For *how* each mechanism works, follow the links into
 - **No pool earmark.** Each expiry is settlement-self-contained at its floor: a
   market that never receives another top-up still pays every settlement winner
   in full. The per-expiry allocation cap snapshotted at market creation is enforced
-  on every funding move as a ceiling, and the pool sync tops every market up toward
-  its reserve target before an LP withdrawal pays out.
+  on every funding move as a ceiling. Live top-ups come from the permissionless
+  `rebalance_expiry_cash`, not the flush, so an LP withdrawal can draw idle down
+  before a market's next top-up.
 - **Custody.** USDC lives in exactly four places: account-package `Account`
   custody, each expiry's `ExpiryCash`, each queued order's escrow in its
   `deepbook_predict_orders` record, and the pool ledger's idle balance.
@@ -169,6 +170,7 @@ See [../concepts/delayed-execution.md](../concepts/delayed-execution.md).
 ## Mint admission
 
 - Raw `entry_probability` and every finite leg's probability (lower ABOVE, upper BELOW) must lie in `[min_entry_probability, max_entry_probability]`; fees are not included in these mint-only bounds, and infinite sentinels are exempt.
+- A market's entry band lies inside the template band at its creation: `template_min ≤ min_entry_probability < max_entry_probability ≤ template_max`. Creation can narrow it, never widen it, and nothing changes it afterwards.
 - `premium = entry_probability × quantity ≥ min_premium`; the holder pays this in full — there is no financed remainder.
 - `all_in_cost ≤ quantity`; the complete trader debit cannot exceed the position's maximum settlement payout.
 

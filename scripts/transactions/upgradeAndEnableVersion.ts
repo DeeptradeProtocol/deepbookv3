@@ -7,14 +7,16 @@ import { Transaction } from "@mysten/sui/transactions";
 import { normalizeSuiAddress, toBase64 } from "@mysten/sui/utils";
 import { serializeUnsignedUpgrade } from "./serializeUnsignedUpgrade.js";
 
-// Shared by the scripts that upgrade a package and enable its new version in the
-// same transaction (mainPackageUpgradeEnableVersion.ts,
-// marginPackageUpgradeEnableVersion.ts).
+// Shared by the scripts that upgrade a package and make admin calls in the same
+// transaction (mainPackageUpgradeEnableVersion.ts,
+// marginPackageUpgradeEnableVersion.ts, vaultPackageUpgradeSetTraders.ts), and by
+// propbookPredictMathPackageUpgrade.ts, which upgrades two packages in one.
 //
 // The upgrade commands are the ones `sui client upgrade` builds for the
 // upgrade-only scripts. Calls appended after them target the package being
 // upgraded, since a transaction cannot call a package it publishes; the
-// version-management functions they call skip the version gate.
+// version-management functions they call skip the version gate, and
+// margin_liquidation has no version gate.
 
 export const network = "mainnet";
 
@@ -209,5 +211,5 @@ export const writeSimulatedTx = async (
   console.log(`digest: ${await Transaction.from(bytes).getDigest()}`);
 
   writeFileSync(txFilePath, toBase64(bytes));
-  console.log("Upgrade and enable-version transaction saved to tx-data.txt");
+  console.log("Upgrade transaction saved to tx-data.txt");
 };

@@ -38,9 +38,9 @@
 ///
 /// Delayed execution adds pins: a waiting order's boundary ticks, passed in as
 /// `pins` (tick -> count of waiting orders; a key is present only while its
-/// count is positive). Enqueue creates the nodes up front (`ensure_node`), no
+/// count is positive). Enqueue creates the nodes up front (`ens_node`), no
 /// deletion path removes a pinned node, and a resolve fill inserts over existing
-/// nodes only (`insert_exist`), so the keeper never creates a node.
+/// nodes only (`ins_old`), so the keeper never creates a node.
 module deepbook_predict::strike_payout_tree;
 
 use deepbook_predict::{constants, pricing::{Self, Pricer}, range_codec};
@@ -144,7 +144,7 @@ public(package) fun range_max(tree: &StrikePayoutTree, lower_tick: u64, higher_t
 }
 
 /// Return the highest payout prefix outside `(lower_tick, higher_tick]`.
-public(package) fun outside_max(tree: &StrikePayoutTree, lower_tick: u64, higher_tick: u64): u64 {
+public(package) fun out_max(tree: &StrikePayoutTree, lower_tick: u64, higher_tick: u64): u64 {
     let left = if (lower_tick == 0) {
         0
     } else {
@@ -161,7 +161,7 @@ public(package) fun outside_max(tree: &StrikePayoutTree, lower_tick: u64, higher
 /// Evaluate payout liability at one positive normalized settlement price.
 /// Open-lower ranges live in `base`; finite boundaries below
 /// `ceil(settlement / tick_size)` are folded into that prefix.
-public(package) fun settled_liab(tree: &StrikePayoutTree, settlement: u64, tick_size: u64): u64 {
+public(package) fun liab_at(tree: &StrikePayoutTree, settlement: u64, tick_size: u64): u64 {
     let limit_tick = range_codec::limit_tick(settlement, tick_size);
     prefix_pay(
         &tree.nodes,
@@ -290,7 +290,7 @@ public(package) fun insert_range(
 /// is stamped like any post-snapshot creation: zero shadows under an active
 /// generation, so the frozen walk excludes it. Only a pin keeps it alive past
 /// the next emptying mutation or `snap_done`.
-public(package) fun ensure_node(tree: &mut StrikePayoutTree, tick: u64): bool {
+public(package) fun ens_node(tree: &mut StrikePayoutTree, tick: u64): bool {
     if (tick == 0 || tick == constants::pos_inf_tick!() || tree.nodes.contains(tick)) {
         return false
     };
@@ -306,7 +306,7 @@ public(package) fun ensure_node(tree: &mut StrikePayoutTree, tick: u64): bool {
 /// Mirrors `insert_range` over a path with no node-creation branch, so no keeper
 /// path reaches `table::add`. Each touched node still captures its shadow
 /// before the mutation (RP-29).
-public(package) fun insert_exist(
+public(package) fun ins_old(
     tree: &mut StrikePayoutTree,
     lower_tick: u64,
     higher_tick: u64,
@@ -344,11 +344,7 @@ public(package) fun remove_range(
 /// The refund routine's best-effort cleanup after it unpins. A missing tick,
 /// a sentinel, a node holding quantity, a pinned node, and a husk the active
 /// generation still needs are all left alone and return false.
-public(package) fun prune_node(
-    tree: &mut StrikePayoutTree,
-    tick: u64,
-    pins: &VecMap<u64, u64>,
-): bool {
+public(package) fun prune_n(tree: &mut StrikePayoutTree, tick: u64, pins: &VecMap<u64, u64>): bool {
     if (!tree.nodes.contains(tick) || pins.contains(&tick)) return false;
     let node = tree.nodes[tick];
     let snapshot_seq = if (tree.snapshot_active) tree.snapshot_seq else 0;
